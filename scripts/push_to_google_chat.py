@@ -133,18 +133,22 @@ def build_card(summary: dict[str, Any]) -> dict[str, Any]:
     sha = summary.get("commit_sha") or ""
     actions = []
     if sha and sha != "none":
+        # cardsV2 button: 'text' at top level, 'openLink.url' nested inside 'onClick'
         actions.append({
-            "openLink": {
-                "url": (
-                    f"https://github.com/${{REPO_OWNER}}/${{REPO_NAME}}/"
-                    f"commit/{sha}"
-                ),
-                "text": "View commit",
-            }
+            "text": "View commit",
+            "onClick": {
+                "openLink": {
+                    "url": (
+                        f"https://github.com/${{REPO_OWNER}}/${{REPO_NAME}}/"
+                        f"commit/{sha}"
+                    ),
+                },
+            },
         })
     footer_widgets: list[dict[str, Any]] = []
     if actions:
-        footer_widgets.append({"buttons": actions})
+        # cardsV2 widget type is 'buttonList' (not 'buttons' — that's v1 card syntax)
+        footer_widgets.append({"buttonList": {"buttons": actions}})
     footer_widgets.append({
         "textParagraph": {
             "text": "由 daily-morning-push 自动生成"
