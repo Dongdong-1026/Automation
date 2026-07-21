@@ -14,6 +14,7 @@ import argparse
 import csv
 import datetime as _dt
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
