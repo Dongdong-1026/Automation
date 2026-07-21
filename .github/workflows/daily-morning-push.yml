@@ -1,0 +1,204 @@
+name: Daily Morning Push (HSI → Google Chat)
+
+on:
+  schedule:
+    # 00:00 UTC = 08:00 HKT / Beijing, weekdays
+    - cron: "0 0 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  daily-morning-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      TICKER: "^HSI"
+      TICKER_DIR: "HSI"
+      RUN_MODE: "INFERENCE"
+      RUN_FS: "0"
+      RUN_HPO: "0"
+      RUN_AUTO: "1"
+      VOL_STRATEGY: "mean"
+      VOL_VALUE: "0"
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Cache TA-Lib C library
+        id: cache-talib
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/libta_lib.*
+          key: ${{ runner.os }}-talib-v4
+
+      - name: Install TA-Lib C library
+        if: steps.cache-talib.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/ta-lib/ta-lib.git /tmp/ta-lib-src
+          cd /tmp/ta-lib-src
+          autoreconf -fi
+          ./configure --prefix=/usr/local
+          make
+          sudo make install
+          sudo ldconfig
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install papermill
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Pull latest model with LFS
+        run: git lfs pull
+
+      - name: Verify LFS files are hydrated
+        run: |
+          if git lfs ls-files | grep -q "^-"; then
+            echo "❌ Some LFS files are still pointers and not downloaded."
+            git lfs ls-files
+            exit 1
+          fi
+
+      - name: Run INFERENCE (with bootstrap fallback)
+        id: inference
+        env:
+          ALLTICK_API_KEY: ${{ secrets.ALLTICK_API_KEY }}
+          ALLTICK_API_URL: ${{ secrets.ALLTICK_API_URL }}
+        run: |
+          set -e
+          INFER_NB="output_inference_${TICKER}.ipynb"
+          STATUS="ok"
+
+          if papermill LSTM_twotarget_v3.ipynb "$INFER_NB" \
+              -p TICKER "$TICKER" \
+              -p RUN_MODE "$RUN_MODE" \
+              -p RUN_FS "$RUN_FS" \
+              -p RUN_HPO "$RUN_HPO" \
+              -p VOL_STRATEGY "$VOL_STRATEGY" \
+              -p VOL_VALUE "$VOL_VALUE" \
+              -p RUN_AUTO "$RUN_AUTO"; then
+            echo "✅ INFERENCE succeeded."
+          else
+            echo "⚠️ INFERENCE failed, attempting bootstrap TRAIN..."
+            papermill LSTM_twotarget_v3.ipynb \
+              "output_bootstrap_train_${TICKER}.ipynb" \
+              -p TICKER "$TICKER" \
+              -p RUN_MODE "TRAIN" \
+              -p RUN_FS "0" \
+              -p RUN_HPO "0" \
+              -p VOL_STRATEGY "$VOL_STRATEGY" \
+              -p VOL_VALUE "$VOL_VALUE" \
+              -p RUN_AUTO "$RUN_AUTO"
+            papermill LSTM_twotarget_v3.ipynb "$INFER_NB" \
+              -p TICKER "$TICKER" \
+              -p RUN_MODE "INFERENCE" \
+              -p RUN_FS "0" \
+              -p RUN_HPO "0" \
+              -p VOL_STRATEGY "$VOL_STRATEGY" \
+              -p VOL_VALUE "$VOL_VALUE" \
+              -p RUN_AUTO "$RUN_AUTO"
+            STATUS="bootstrapped"
+          fi
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+
+      - name: Stage latest artifacts under model_artifacts/latest/HSI/
+        if: always() && steps.inference.outputs.status != ''
+        run: |
+          set -e
+          NEW_RUN=$(ls -td model_artifacts/${TICKER_DIR}/*/run_* | head -1)
+          echo "Latest run: $NEW_RUN"
+          mkdir -p model_artifacts/latest/${TICKER_DIR}
+          # Copy PNGs (overwrite), CSVs and JSONs from this run
+          cp -f "$NEW_RUN"/*.png model_artifacts/latest/${TICKER_DIR}/ 2>/dev/null || true
+          cp -f "$NEW_RUN"/*.csv model_artifacts/latest/${TICKER_DIR}/ 2>/dev/null || true
+          cp -f "$NEW_RUN"/*.json model_artifacts/latest/${TICKER_DIR}/ 2>/dev/null || true
+          echo "NEW_RUN=$NEW_RUN" >> "$GITHUB_ENV"
+
+      - name: Commit latest artifacts
+        id: commit
+        continue-on-error: true
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add -f model_artifacts/latest/${TICKER_DIR}/
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "[Auto] Morning push $(date -u +%Y-%m-%d) ${TICKER}"
+            git push
+            echo "committed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate Step8 1D review (best effort)
+        id: review
+        continue-on-error: true
+        run: |
+          python scripts/step8_review.py --root model_artifacts --ticker "$TICKER" || true
+          echo "review_done=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build summary JSON
+        id: summary
+        if: always()
+        run: |
+          set -e
+          STATUS="${{ steps.inference.outputs.status }}"
+          COMMIT_SHA="${{ steps.commit.outputs.committed == 'true' && github.sha || 'none' }}"
+          python scripts/collect_run_artifacts.py \
+            --run-dir "$NEW_RUN" \
+            --root model_artifacts \
+            --ticker "$TICKER" \
+            --commit-sha "$COMMIT_SHA" \
+            > summary.json
+          # Ensure commit_sha is populated for the card even if commit step didn't fire
+          python -c "
+          import json
+          with open('summary.json') as f: s = json.load(f)
+          s['commit_sha'] = s.get('commit_sha') or '${{ github.sha }}'
+          with open('summary.json','w') as f: json.dump(s, f, ensure_ascii=False)
+          "
+
+      - name: Push to Google Chat
+        id: chat
+        if: always()
+        env:
+          GOOGLE_CHAT_WEBHOOK: ${{ secrets.GOOGLE_CHAT_WEBHOOK }}
+        continue-on-error: true
+        run: |
+          python scripts/push_to_google_chat.py \
+            --payload summary.json \
+            --webhook-env GOOGLE_CHAT_WEBHOOK \
+            || echo "CHAT_PUSH_FAILED" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-morning-push-${{ env.TICKER_DIR }}-${{ github.run_number }}
+          path: |
+            summary.json
+            output_inference_${TICKER}.ipynb
+            output_bootstrap_train_${TICKER}.ipynb
+            model_artifacts/latest/${TICKER_DIR}/**
+            model_artifacts/Step8_Review_*.csv
+          retention-days: 30
