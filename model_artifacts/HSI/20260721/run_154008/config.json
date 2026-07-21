@@ -1,0 +1,9 @@
+{
+    "num_patterns": 84,
+    "hidden_size": 64,
+    "num_layers": 1,
+    "dropout": 0.4,
+    "sequence_length": 30,
+    "learning_rate": 5.595074635794791e-05,
+    "best_epoch": 51
+}

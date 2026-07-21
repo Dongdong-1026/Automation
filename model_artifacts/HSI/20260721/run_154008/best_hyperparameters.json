@@ -1,0 +1,22 @@
+{
+    "hidden_size": 64,
+    "num_layers": 1,
+    "dropout": 0.4,
+    "learning_rate": 5.595074635794791e-05,
+    "weight_decay": 0.000161190447276092,
+    "loss_weight_returns": 0.1,
+    "loss_weight_volatility": 0.2,
+    "loss_weight_direction": 0.7,
+    "sigmoid_scale": 40.0,
+    "horizon_weight_1d": 0.75,
+    "horizon_weights": [
+        0.75,
+        0.075,
+        0.05,
+        0.0375,
+        0.0375,
+        0.025,
+        0.025
+    ],
+    "best_composite_score": 0.04592391304347825
+}

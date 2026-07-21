@@ -1,0 +1,3 @@
+﻿run_timestamp,run_date,ticker_symbol,test_acc,test_r2,1.5SD_hit_rate,best_epoch,model_path
+2026-07-21 15:36:35,2026-07-21,^HSI,54.09%,-0.0060,70.15%,17,model_artifacts/HSI/20260721/run_152816/best_model.pth
+2026-07-21 15:40:50,2026-07-21,^HSI,49.03%,-0.0195,67.03%,51,model_artifacts/HSI/20260721/run_154008/best_model.pth

@@ -1,0 +1,18 @@
+{
+    "run_timestamp": "2026-07-21 15:40:50",
+    "metrics": {
+        "directional_accuracy_test": 49.0301724137931,
+        "test_r2": -0.019542336463928223,
+        "test_mae": 1.1169407367706299,
+        "1.5SD_hit_rate": 67.02586206896551
+    },
+    "model_config": {
+        "num_patterns": 84,
+        "hidden_size": 64,
+        "num_layers": 1,
+        "dropout": 0.4,
+        "sequence_length": 30,
+        "learning_rate": 5.595074635794791e-05,
+        "best_epoch": 51
+    }
+}

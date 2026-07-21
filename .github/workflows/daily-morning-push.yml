@@ -17,8 +17,8 @@ jobs:
       TICKER: "^HSI"
       TICKER_DIR: "HSI"
       RUN_MODE: "INFERENCE"
-      RUN_FS: "0"
-      RUN_HPO: "0"
+      RUN_FS: "False"
+      RUN_HPO: "False"
       RUN_AUTO: "1"
       VOL_STRATEGY: "mean"
       VOL_VALUE: "0"
@@ -104,16 +104,16 @@ jobs:
               "output_bootstrap_train_${TICKER}.ipynb" \
               -p TICKER "$TICKER" \
               -p RUN_MODE "TRAIN" \
-              -p RUN_FS "0" \
-              -p RUN_HPO "0" \
+              -p RUN_FS "False" \
+              -p RUN_HPO "False" \
               -p VOL_STRATEGY "$VOL_STRATEGY" \
               -p VOL_VALUE "$VOL_VALUE" \
               -p RUN_AUTO "$RUN_AUTO"
             papermill LSTM_twotarget_v3_P5_diag.ipynb "$INFER_NB" \
               -p TICKER "$TICKER" \
               -p RUN_MODE "INFERENCE" \
-              -p RUN_FS "0" \
-              -p RUN_HPO "0" \
+              -p RUN_FS "False" \
+              -p RUN_HPO "False" \
               -p VOL_STRATEGY "$VOL_STRATEGY" \
               -p VOL_VALUE "$VOL_VALUE" \
               -p RUN_AUTO "$RUN_AUTO"

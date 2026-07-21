@@ -1,0 +1,4 @@
+{
+  "scaling_method": "log_standard",
+  "requires_log_transform": true
+}
