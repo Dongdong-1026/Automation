@@ -1,0 +1,4 @@
+# Protect model_artifacts with Git LFS (large file storage)
+model_artifacts/** filter=lfs diff=lfs merge=lfs -text
+# Explicit PNG rule so any future PNG (outside model_artifacts) is also LFS-tracked
+*.png filter=lfs diff=lfs merge=lfs -text
