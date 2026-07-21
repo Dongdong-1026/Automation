@@ -181,6 +181,16 @@ jobs:
           with open('summary.json','w') as f: json.dump(s, f, ensure_ascii=False)
           "
 
+      - name: Generate LLM summary
+        id: llm
+        if: always()
+        env:
+          LLM_API_BASE: ${{ secrets.LLM_API_BASE }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+        run: |
+          python scripts/summarize_with_llm.py --payload summary.json || true
+
       - name: Push to Google Chat
         id: chat
         if: always()

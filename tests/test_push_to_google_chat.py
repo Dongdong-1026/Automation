@@ -1,4 +1,4 @@
-"""Tests for push_to_google_chat."""
+"""Tests for push_to_google_chat.build_card."""
 
 from __future__ import annotations
 
@@ -42,6 +42,41 @@ def test_build_card_no_review_still_renders(fake_summary_json):
     body = json.dumps(card)
     assert "0.42%" in body
     # 1D 命中 section absent because latest_1d_review is None
+
+
+def test_build_card_with_llm_summary_renders_golden_section(fake_summary_json):
+    fake_summary_json["llm_summary"] = "短期承压，中长期向好，建议关注T+10/T+15反弹机会。"
+    card = build_card(fake_summary_json)
+    sections = card["cardsV2"][0]["card"]["sections"]
+    # First section should be the AI summary, golden text
+    first = sections[0]["widgets"][0]["textParagraph"]["text"]
+    assert "#FFD700" in first  # gold color
+    assert "AI 总结" in first
+    assert fake_summary_json["llm_summary"] in first
+    # Other sections still present
+    body = json.dumps(card)
+    assert "0.42%" in body
+    assert "View commit" in body
+
+
+def test_build_card_without_llm_summary_skips_section(fake_summary_json):
+    # No llm_summary field — top section should be the key numerics
+    fake_summary_json.pop("llm_summary", None)
+    card = build_card(fake_summary_json)
+    sections = card["cardsV2"][0]["card"]["sections"]
+    first_text = sections[0]["widgets"][0]["textParagraph"]["text"]
+    # First section is the predictions/volatility section, NOT the AI block
+    assert "AI 总结" not in first_text
+    assert "本次关键预测" in first_text or "未来波动率" in first_text
+
+
+def test_build_card_html_escapes_llm_summary(fake_summary_json):
+    # Malicious LLM output shouldn't break the cardsV2 envelope
+    fake_summary_json["llm_summary"] = "<script>alert(1)</script> & \"quotes\""
+    card = build_card(fake_summary_json)
+    body = json.dumps(card)
+    assert "&lt;script&gt;" in body
+    assert "<script>" not in body.split('cardsV2')[0]  # not raw inside the card
 
 
 @responses.activate

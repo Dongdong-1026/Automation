@@ -30,6 +30,15 @@ def _status_emoji(status: str) -> str:
     }.get(status, "ℹ️")
 
 
+def _html_escape(text: str) -> str:
+    """Escape characters that would break the cardsV2 HTML subset."""
+    return (
+        text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+    )
+
+
 def _fmt_pct(value: float | None, digits: int = 2) -> str:
     if value is None:
         return "—"
@@ -78,6 +87,20 @@ def build_card(summary: dict[str, Any]) -> dict[str, Any]:
     title = f"{emoji} {ticker} 早晨预测 · {title_date} · {status}"
 
     sections: list[dict[str, Any]] = []
+
+    # Section 0: LLM-generated summary (golden text), if available
+    llm_summary = (summary.get("llm_summary") or "").strip()
+    if llm_summary:
+        sections.append({
+            "widgets": [{
+                "textParagraph": {
+                    "text": (
+                        "<font color=\"#FFD700\"><b>✨ AI 总结</b></font><br>"
+                        f"<font color=\"#FFD700\">{_html_escape(llm_summary)}</font>"
+                    )
+                }
+            }]
+        })
 
     # Section 1: key numerics (or error)
     widgets: list[dict[str, Any]] = []
