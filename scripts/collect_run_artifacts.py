@@ -20,7 +20,9 @@ from typing import Any
 
 PNG_SUFFIX = ".png"
 PREDICTION_FILE = "prediction_summary.json"
+PREDICTION_REPORT_FILE = "Proportional_Inference_Report.txt"
 REVIEW_CSV = "Step8_Review_Daily_1D.csv"
+PREDICTION_HORIZONS = ["1d", "5d", "10d", "15d", "20d", "25d", "30d"]
 
 
 def _utc_now_iso() -> str:
@@ -28,15 +30,88 @@ def _utc_now_iso() -> str:
 
 
 def _read_prediction(run_dir: Path) -> tuple[dict[str, Any] | None, str | None]:
+    """Read the predictions dict from a run directory.
+
+    Prefer the structured prediction_summary.json (if present, e.g. from TRAIN).
+    Otherwise parse the human-readable Proportional_Inference_Report.txt
+    that is written by Step 8 in every successful INFERENCE/TRAIN run.
+    """
     p = run_dir / PREDICTION_FILE
-    if not p.exists():
-        return None, f"{PREDICTION_FILE} missing in {run_dir}"
+    if p.exists():
+        try:
+            with p.open(encoding="utf-8") as f:
+                return json.load(f), None
+        except (OSError, json.JSONDecodeError) as exc:
+            return None, f"failed to parse {PREDICTION_FILE}: {exc}"
+
+    # Fall back: parse Proportional_Inference_Report.txt
+    report = run_dir / PREDICTION_REPORT_FILE
+    if report.exists():
+        parsed = _parse_proportional_report(report)
+        if parsed is not None:
+            return parsed, None
+        return None, f"failed to parse {PREDICTION_REPORT_FILE}"
+
+    return None, f"{PREDICTION_FILE} missing in {run_dir}"
+
+
+def _parse_proportional_report(report_path: Path) -> dict[str, Any] | None:
+    """Parse the Proportional_Inference_Report.txt text file.
+
+    Expected row format:
+      T+1      | 2026-07-22   |   24898.42 (  -1.30%) |   25245.44 (  +0.07%) |   25597.31 (  +1.47%) |     0.92%
+
+    Columns: horizon, date, bear(price, ret), base(price, ret), bull(price, ret), vol_pct
+    """
+    import re
+    horizon_pat = re.compile(r"^T\+(\d+)\s*\|")
+    cell_pat = re.compile(r"([+-]?\d+\.\d+)")  # any signed decimal in a cell
     try:
-        with p.open(encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        return None, f"failed to parse {PREDICTION_FILE}: {exc}"
-    return data, None
+        text = report_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    horizon_to_ret = {}
+    for line in text.splitlines():
+        m = horizon_pat.match(line)
+        if not m:
+            continue
+        horizon_n = int(m.group(1))
+        # Extract 5 numbers: bear_price, bear_ret%, base_price, base_ret%, bull_price, bull_ret%, vol%
+        # Use a more robust pattern that captures "price (ret%)" pairs
+        # Try to find groups: bear price, bear ret, base price, base ret, bull price, bull ret, vol
+        nums = cell_pat.findall(line)
+        # Expect at least 7 numbers; mapping: 0=bp, 1=br, 2=base_p, 3=base_r, 4=bull_p, 5=bull_r, 6=vol
+        if len(nums) < 7:
+            continue
+        try:
+            # nums[1] is the return in PERCENT, e.g. -1.30 → divide by 100
+            base_return = float(nums[3]) / 100.0
+            vol = float(nums[6]) / 100.0  # vol also in percent
+        except ValueError:
+            continue
+        horizon_to_ret[f"{horizon_n}d"] = base_return
+        # Optionally also store vol per horizon
+        # (kept simple: just predictions for now)
+
+    if not horizon_to_ret:
+        return None
+
+    # Determine direction by aggregating 1d return sign
+    first_ret = next(iter(horizon_to_ret.values()), 0.0)
+    if first_ret > 0.005:
+        direction = "up"
+    elif first_ret < -0.005:
+        direction = "down"
+    else:
+        direction = "neutral"
+
+    return {
+        "predictions": horizon_to_ret,
+        "volatility": horizon_to_ret.get("30d", 0.0) * 16,  # crude proxy
+        "direction": direction,
+        "source": str(report_path),
+    }
 
 
 def _list_pngs(run_dir: Path, repo_owner: str | None = None, repo_name: str | None = None, branch: str | None = None) -> list[dict[str, str]]:
