@@ -1,0 +1,119 @@
+name: Monthly HPO
+
+on:
+  schedule:
+    # 每月1号 02:00 HKT (18:00 UTC)
+    - cron: "0 18 1 * *"
+  workflow_dispatch:
+
+jobs:
+  monthly-hpo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ticker: "^HSI"
+            ticker_dir: "HSI"
+          - ticker: "^GSPC"
+            ticker_dir: "GSPC"
+          - ticker: "GC=F"
+            ticker_dir: "GC_F"
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Cache TA-Lib C library
+        id: cache-talib
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/libta_lib.*
+          key: ${{ runner.os }}-talib-v4
+
+      - name: Install TA-Lib C library
+        if: steps.cache-talib.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/ta-lib/ta-lib.git /tmp/ta-lib-src
+          cd /tmp/ta-lib-src
+          autoreconf -fi
+          ./configure --prefix=/usr/local
+          make
+          sudo make install
+          sudo ldconfig
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install papermill
+          pip install -r requirements.txt
+
+      - name: Pull latest model with LFS
+        run: git lfs pull
+
+      - name: Verify LFS files are hydrated
+        run: |
+          if git lfs ls-files | grep -q "^-"; then
+            echo "❌ Some LFS files are still pointers and not downloaded."
+            git lfs ls-files
+            exit 1
+          fi
+
+      - name: Run HPO + FS + TRAIN
+        env:
+          RUN_AUTO: "1"
+          TICKER: ${{ matrix.ticker }}
+          RUN_MODE: "TRAIN"
+          RUN_FS: "1"
+          RUN_HPO: "1"
+          VOL_STRATEGY: "mean"
+          VOL_VALUE: "0"
+          ALLTICK_API_KEY: ${{ secrets.ALLTICK_API_KEY }}
+          ALLTICK_API_URL: ${{ secrets.ALLTICK_API_URL }}
+        run: |
+          papermill LSTM_twotarget_v3.ipynb output_hpo_${{ matrix.ticker }}.ipynb \
+            -p TICKER "$TICKER" \
+            -p RUN_MODE "$RUN_MODE" \
+            -p RUN_FS "$RUN_FS" \
+            -p RUN_HPO "$RUN_HPO" \
+            -p VOL_STRATEGY "$VOL_STRATEGY" \
+            -p VOL_VALUE "$VOL_VALUE" \
+            -p RUN_AUTO "$RUN_AUTO"
+
+      - name: Commit updated model artifacts
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add -f model_artifacts/
+          git diff --staged --quiet || git commit -m "[Auto] Monthly HPO ${{ matrix.ticker }} $(date +%Y-%m-%d)"
+          git push
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: monthly-hpo-${{ matrix.ticker }}-${{ github.run_number }}
+          path: |
+            output_hpo_${{ matrix.ticker }}.ipynb
+            model_artifacts/${{ matrix.ticker_dir }}/**/run_*/**/*.pth
+            model_artifacts/${{ matrix.ticker_dir }}/**/run_*/**/*.json
+            model_artifacts/${{ matrix.ticker_dir }}/**/run_*/**/*.csv
+            model_artifacts/${{ matrix.ticker_dir }}/**/run_*/**/*.png
+          retention-days: 30

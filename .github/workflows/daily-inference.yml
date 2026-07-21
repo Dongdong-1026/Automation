@@ -1,0 +1,136 @@
+name: Daily Inference
+
+on:
+  schedule:
+    # 15:30 HKT (07:30 UTC) - 市场收盘初步数据
+    - cron: "30 7 * * 1-5"
+    # 17:30 HKT (09:30 UTC) - 傍晚补充数据
+    - cron: "30 9 * * 1-5"
+    # 01:00 HKT (17:00 UTC) - 次日凌晨最终确认
+    - cron: "0 17 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  daily-inference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        ticker: ["^HSI", "^GSPC", "GC=F"]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+
+      - name: Cache TA-Lib C library
+        id: cache-talib
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/libta_lib.*
+          key: ${{ runner.os }}-talib-v4
+
+      - name: Install TA-Lib C library
+        if: steps.cache-talib.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/ta-lib/ta-lib.git /tmp/ta-lib-src
+          cd /tmp/ta-lib-src
+          autoreconf -fi
+          ./configure --prefix=/usr/local
+          make
+          sudo make install
+          sudo ldconfig
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install papermill
+          pip install -r requirements.txt
+
+      - name: Pull latest model with LFS
+        run: git lfs pull
+
+      - name: Verify LFS files are hydrated
+        run: |
+          if git lfs ls-files | grep -q "^-"; then
+            echo "❌ Some LFS files are still pointers and not downloaded."
+            git lfs ls-files
+            exit 1
+          fi
+
+      - name: Run INFERENCE mode
+        env:
+          RUN_MODE: INFERENCE
+          RUN_FS: "0"
+          RUN_HPO: "0"
+          VOL_STRATEGY: mean
+          VOL_VALUE: "0"
+          TICKER: ${{ matrix.ticker }}
+          ALLTICK_API_KEY: ${{ secrets.ALLTICK_API_KEY }}
+          ALLTICK_API_URL: ${{ secrets.ALLTICK_API_URL }}
+          RUN_AUTO: "1"
+        run: |
+          set -e
+          INFER_NOTEBOOK="output_inference_${{ matrix.ticker }}.ipynb"
+          TRAIN_NOTEBOOK="output_bootstrap_train_${{ matrix.ticker }}.ipynb"
+
+          if papermill LSTM_twotarget_v3.ipynb "$INFER_NOTEBOOK" \
+            -p TICKER "$TICKER" \
+            -p RUN_MODE "$RUN_MODE" \
+            -p RUN_FS "$RUN_FS" \
+            -p RUN_HPO "$RUN_HPO" \
+            -p VOL_STRATEGY "$VOL_STRATEGY" \
+            -p VOL_VALUE "$VOL_VALUE" \
+            -p RUN_AUTO "$RUN_AUTO"; then
+            echo "✅ INFERENCE succeeded."
+          else
+            echo "⚠️ INFERENCE failed, attempting bootstrap TRAIN (RUN_FS=0, RUN_HPO=0)..."
+            papermill LSTM_twotarget_v3.ipynb "$TRAIN_NOTEBOOK" \
+              -p TICKER "$TICKER" \
+              -p RUN_MODE "TRAIN" \
+              -p RUN_FS "0" \
+              -p RUN_HPO "0" \
+              -p VOL_STRATEGY "$VOL_STRATEGY" \
+              -p VOL_VALUE "$VOL_VALUE" \
+              -p RUN_AUTO "$RUN_AUTO"
+
+            echo "🔁 Re-running INFERENCE after bootstrap training..."
+            papermill LSTM_twotarget_v3.ipynb "$INFER_NOTEBOOK" \
+              -p TICKER "$TICKER" \
+              -p RUN_MODE "INFERENCE" \
+              -p RUN_FS "0" \
+              -p RUN_HPO "0" \
+              -p VOL_STRATEGY "$VOL_STRATEGY" \
+              -p VOL_VALUE "$VOL_VALUE" \
+              -p RUN_AUTO "$RUN_AUTO"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: daily-inference-${{ matrix.ticker }}-${{ github.run_number }}
+          path: |
+            model_artifacts/**/run_*/**/*.png
+            model_artifacts/**/run_*/**/*.csv
+            model_artifacts/**/run_*/**/*.json
+            model_artifacts/Step8_Review_*.csv
+            output_bootstrap_train_${{ matrix.ticker }}.ipynb
+            output_inference_${{ matrix.ticker }}.ipynb
+          retention-days: 7

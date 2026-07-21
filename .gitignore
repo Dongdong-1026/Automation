@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+output*.ipynb
+
+# Logs & cache
+logs/
+alltick_cache/
+yf_cache/
+
+# OS
+.DS_Store
+*.swp
+
+# Large data (model_artifacts tracked with Git LFS in .gitattributes)
+model_artifacts/
+
+# Environment (never commit .env)
+.env
+.env.local
