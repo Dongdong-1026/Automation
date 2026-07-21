@@ -154,7 +154,7 @@ jobs:
         id: review
         continue-on-error: true
         run: |
-          python scripts/step8_review.py --root model_artifacts --ticker "$TICKER" || true
+          python step8_review.py --root model_artifacts --ticker "$TICKER" || true
           echo "review_done=true" >> "$GITHUB_OUTPUT"
 
       - name: Build summary JSON
