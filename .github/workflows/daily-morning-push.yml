@@ -169,6 +169,9 @@ jobs:
             --root model_artifacts \
             --ticker "$TICKER" \
             --commit-sha "$COMMIT_SHA" \
+            --repo-owner "${{ github.repository_owner }}" \
+            --repo-name "${{ github.event.repository.name }}" \
+            --branch "${GITHUB_REF_NAME}" \
             > summary.json
           # Ensure commit_sha is populated for the card even if commit step didn't fire
           python -c "

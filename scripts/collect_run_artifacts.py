@@ -39,10 +39,31 @@ def _read_prediction(run_dir: Path) -> tuple[dict[str, Any] | None, str | None]:
     return data, None
 
 
-def _list_pngs(run_dir: Path) -> list[dict[str, str]]:
+def _list_pngs(run_dir: Path, repo_owner: str | None = None, repo_name: str | None = None, branch: str | None = None) -> list[dict[str, str]]:
+    """List PNGs and build raw.githubusercontent.com URLs.
+
+    URL pattern (when owner/repo/branch all provided):
+      https://raw.githubusercontent.com/{owner}/{repo}/{branch}/model_artifacts/latest/{TICKER_DIR}/{name}
+    This matches the path used by the workflow's "Commit latest artifacts" step.
+    """
     if not run_dir.exists():
         return []
-    return [{"name": p.name} for p in sorted(run_dir.glob(f"*{PNG_SUFFIX}"))]
+    files = []
+    for p in sorted(run_dir.glob(f"*{PNG_SUFFIX}")):
+        entry: dict[str, str] = {"name": p.name}
+        if repo_owner and repo_name and branch:
+            # The PNGs get copied into model_artifacts/latest/{TICKER_DIR}/ by the workflow
+            # We infer TICKER_DIR from the run path: .../model_artifacts/{TICKER_DIR}/{date}/run_*/
+            try:
+                ticker_dir = run_dir.parents[1].name
+            except IndexError:
+                ticker_dir = "HSI"
+            entry["url"] = (
+                f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/"
+                f"{branch}/model_artifacts/latest/{ticker_dir}/{p.name}"
+            )
+        files.append(entry)
+    return files
 
 
 def _read_latest_review(root: Path, ticker: str) -> dict[str, Any] | None:
@@ -75,6 +96,9 @@ def build_summary(
     root: Path,
     ticker: str,
     commit_sha: str | None,
+    repo_owner: str | None = None,
+    repo_name: str | None = None,
+    branch: str | None = None,
 ) -> dict[str, Any]:
     """Build the summary JSON dict. Never raises."""
     summary: dict[str, Any] = {
@@ -107,7 +131,7 @@ def build_summary(
         summary["volatility"] = prediction.get("volatility")
         summary["direction"] = prediction.get("direction")
 
-    summary["png_files"] = _list_pngs(run_dir)
+    summary["png_files"] = _list_pngs(run_dir, repo_owner, repo_name, branch)
 
     if summary["status"] == "incomplete" and not summary["png_files"]:
         summary["status"] = "failed"
@@ -122,6 +146,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--root", required=True, type=Path)
     p.add_argument("--ticker", required=True)
     p.add_argument("--commit-sha", default=None)
+    p.add_argument("--repo-owner", default=os.environ.get("REPO_OWNER", ""))
+    p.add_argument("--repo-name", default=os.environ.get("REPO_NAME", ""))
+    p.add_argument("--branch", default=os.environ.get("BRANCH", "main"))
     return p.parse_args(argv)
 
 
@@ -132,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
         root=args.root,
         ticker=args.ticker,
         commit_sha=args.commit_sha,
+        repo_owner=args.repo_owner or None,
+        repo_name=args.repo_name or None,
+        branch=args.branch or None,
     )
     json.dump(summary, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
