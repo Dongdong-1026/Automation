@@ -116,11 +116,14 @@ def _parse_proportional_report(report_path: Path) -> dict[str, Any] | None:
 
 
 def _list_pngs(run_dir: Path, repo_owner: str | None = None, repo_name: str | None = None, branch: str | None = None) -> list[dict[str, str]]:
-    """List PNGs and build raw.githubusercontent.com URLs.
+    """List PNGs and build LFS-aware URLs.
 
     URL pattern (when owner/repo/branch all provided):
-      https://raw.githubusercontent.com/{owner}/{repo}/{branch}/model_artifacts/latest/{TICKER_DIR}/{name}
-    This matches the path used by the workflow's "Commit latest artifacts" step.
+      https://media.githubusercontent.com/media/{owner}/{repo}/{branch}/model_artifacts/latest/{TICKER_DIR}/{name}
+
+    GitHub LFS objects are NOT served by raw.githubusercontent.com (that URL
+    returns the pointer text). media.githubusercontent.com resolves the pointer
+    to the actual binary content.
     """
     if not run_dir.exists():
         return []
@@ -128,14 +131,12 @@ def _list_pngs(run_dir: Path, repo_owner: str | None = None, repo_name: str | No
     for p in sorted(run_dir.glob(f"*{PNG_SUFFIX}")):
         entry: dict[str, str] = {"name": p.name}
         if repo_owner and repo_name and branch:
-            # The PNGs get copied into model_artifacts/latest/{TICKER_DIR}/ by the workflow
-            # We infer TICKER_DIR from the run path: .../model_artifacts/{TICKER_DIR}/{date}/run_*/
             try:
                 ticker_dir = run_dir.parents[1].name
             except IndexError:
                 ticker_dir = "HSI"
             entry["url"] = (
-                f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/"
+                f"https://media.githubusercontent.com/media/{repo_owner}/{repo_name}/"
                 f"{branch}/model_artifacts/latest/{ticker_dir}/{p.name}"
             )
         files.append(entry)
