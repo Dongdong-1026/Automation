@@ -89,7 +89,7 @@ jobs:
           INFER_NB="output_inference_${TICKER}.ipynb"
           STATUS="ok"
 
-          if papermill LSTM_twotarget_v3.ipynb "$INFER_NB" \
+          if papermill LSTM_twotarget_v3_P5_diag.ipynb "$INFER_NB" \
               -p TICKER "$TICKER" \
               -p RUN_MODE "$RUN_MODE" \
               -p RUN_FS "$RUN_FS" \
@@ -100,7 +100,7 @@ jobs:
             echo "✅ INFERENCE succeeded."
           else
             echo "⚠️ INFERENCE failed, attempting bootstrap TRAIN..."
-            papermill LSTM_twotarget_v3.ipynb \
+            papermill LSTM_twotarget_v3_P5_diag.ipynb \
               "output_bootstrap_train_${TICKER}.ipynb" \
               -p TICKER "$TICKER" \
               -p RUN_MODE "TRAIN" \
@@ -109,7 +109,7 @@ jobs:
               -p VOL_STRATEGY "$VOL_STRATEGY" \
               -p VOL_VALUE "$VOL_VALUE" \
               -p RUN_AUTO "$RUN_AUTO"
-            papermill LSTM_twotarget_v3.ipynb "$INFER_NB" \
+            papermill LSTM_twotarget_v3_P5_diag.ipynb "$INFER_NB" \
               -p TICKER "$TICKER" \
               -p RUN_MODE "INFERENCE" \
               -p RUN_FS "0" \
