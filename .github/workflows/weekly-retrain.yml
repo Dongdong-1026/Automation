@@ -1,9 +1,10 @@
-name: Monthly First Saturday Feature Selection
+name: Weekly Saturday Feature Selection
 
 on:
   schedule:
-    # 每月第一个周六 02:00 HKT (18:00 UTC)
-    - cron: "0 18 * * 6#1"
+    # 每周六 02:00 HKT (18:00 UTC)
+    # NOTE: GitHub Actions cron does not support "6#1" (nth-weekday) syntax.
+    - cron: "0 18 * * 6"
   workflow_dispatch:
 
 jobs:
