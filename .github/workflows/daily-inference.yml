@@ -90,7 +90,7 @@ jobs:
           INFER_NOTEBOOK="output_inference_${{ matrix.ticker }}.ipynb"
           TRAIN_NOTEBOOK="output_bootstrap_train_${{ matrix.ticker }}.ipynb"
 
-          if papermill LSTM_twotarget_v3.ipynb "$INFER_NOTEBOOK" \
+          if papermill LSTM_twotarget_v3_P5_diag.ipynb "$INFER_NOTEBOOK" \
             -p TICKER "$TICKER" \
             -p RUN_MODE "$RUN_MODE" \
             -p RUN_FS "$RUN_FS" \
@@ -101,7 +101,7 @@ jobs:
             echo "✅ INFERENCE succeeded."
           else
             echo "⚠️ INFERENCE failed, attempting bootstrap TRAIN (RUN_FS=0, RUN_HPO=0)..."
-            papermill LSTM_twotarget_v3.ipynb "$TRAIN_NOTEBOOK" \
+            papermill LSTM_twotarget_v3_P5_diag.ipynb "$TRAIN_NOTEBOOK" \
               -p TICKER "$TICKER" \
               -p RUN_MODE "TRAIN" \
               -p RUN_FS "0" \
@@ -111,7 +111,7 @@ jobs:
               -p RUN_AUTO "$RUN_AUTO"
 
             echo "🔁 Re-running INFERENCE after bootstrap training..."
-            papermill LSTM_twotarget_v3.ipynb "$INFER_NOTEBOOK" \
+            papermill LSTM_twotarget_v3_P5_diag.ipynb "$INFER_NOTEBOOK" \
               -p TICKER "$TICKER" \
               -p RUN_MODE "INFERENCE" \
               -p RUN_FS "0" \
