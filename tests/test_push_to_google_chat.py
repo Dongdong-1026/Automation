@@ -74,17 +74,23 @@ def test_build_card_without_llm_summary_skips_section(fake_summary_json):
 
 
 def test_build_card_with_horizon_vol_shows_t30_line(fake_summary_json):
-    """When volatility_by_horizon is provided, show T+30 cumulative as context."""
+    """When volatility_by_horizon is provided, T+30 cumulative vol is primary."""
     fake_summary_json["volatility_by_horizon"] = {
         "1d": 0.0092, "5d": 0.0206, "10d": 0.0292,
         "15d": 0.0357, "20d": 0.0413, "25d": 0.0461, "30d": 0.0505,
     }
     card = build_card(fake_summary_json)
     body = json.dumps(card)
-    assert "T+1" in body, "primary T+1 vol label missing"
-    # T+30 secondary line should reference T+30
-    assert "30d" in body or "T+30" in body, \
-        "expected secondary T+30 line when volatility_by_horizon present"
+    # T+30 cumulative vol is now the headline
+    assert "T+30" in body, "primary T+30 vol label missing"
+    assert "5.05%" in body, "T+30 vol value should appear"
+    # Daily σ mentioned in annotation
+    assert "0.92%" in body, "T+1 daily vol should appear in calc annotation"
+    # Calculation method should be visible (look for ASCII substring since
+    # json.dumps escapes Chinese chars to unicode escapes by default)
+    assert "LSTM vol_head" in body, "calculation method annotation should be visible"
+    # √ is unicode, json.dumps escapes to √. Check for the time-scaling hint.
+    assert "30" in body, "calc annotation should reference 30-day horizon"
 
 
 def test_build_card_html_escapes_llm_summary(fake_summary_json):

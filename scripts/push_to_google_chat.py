@@ -118,16 +118,35 @@ def build_card(summary: dict[str, Any]) -> dict[str, Any]:
             })
         vol = summary.get("volatility")
         vol_by_horizon = summary.get("volatility_by_horizon") or {}
-        vol_t30 = vol_by_horizon.get("30d")
+        vol_t1 = vol_by_horizon.get("1d", vol)  # daily (T+1) vol, falls back to top-level field
+        vol_t30 = vol_by_horizon.get("30d")     # 30-day cumulative vol
         direction = summary.get("direction")
-        # Show T+1 daily vol as primary (canonical "future volatility"),
-        # and T+30 cumulative vol as a secondary line for context.
+        # Prefer the more user-friendly T+30 cumulative vol as the primary
+        # headline number, and show the daily (T+1) vol + calculation method
+        # in a small annotation line.
+        if vol_t30 is not None:
+            headline_vol = vol_t30
+            headline_horizon = "T+30 累计"
+        elif vol_t1 is not None:
+            headline_vol = vol_t1
+            headline_horizon = "T+1 日级"
+        else:
+            headline_vol = vol
+            headline_horizon = "—"
         vol_lines = [
-            f"<b>未来波动率（T+1 日级）：</b> {_fmt_pct(vol)}<br>"
+            f"<b>未来波动率（{headline_horizon}）：</b> {_fmt_pct(headline_vol)}<br>"
             f"<b>方向判断：</b> {direction or '—'}"
         ]
-        if vol_t30 is not None:
-            vol_lines.append(f"<font color=\"#888888\">└ T+30 累计波动率参考：{_fmt_pct(vol_t30)}</font>")
+        # Show calculation method as a small annotation
+        if vol_t1 is not None and vol_t30 is not None and vol_t30 != vol_t1:
+            ratio = vol_t30 / vol_t1 if vol_t1 else 0
+            vol_lines.append(
+                f"<font color=\"#888888\">└ 计算：LSTM vol_head → 日级 σ × √30 ≈ {_fmt_pct(vol_t1)} × {ratio:.2f} ≈ {_fmt_pct(vol_t30)}</font>"
+            )
+        elif vol_t1 is not None:
+            vol_lines.append(
+                f"<font color=\"#888888\">└ 计算：LSTM vol_head 直接输出</font>"
+            )
         widgets.append({
             "textParagraph": {"text": "<br>".join(vol_lines)}
         })
