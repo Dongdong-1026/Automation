@@ -19,10 +19,13 @@ def test_build_card_ok_includes_all_sections(fake_summary_json):
     assert card["cardsV2"][0]["card"]["header"]["title"].startswith("✅")
     body_text = json.dumps(card)
     assert "0.42%" in body_text  # 1d prediction formatted as percent
-    assert "1.82%" in body_text  # volatility
+    assert "1.82%" in body_text  # T+1 daily volatility
     assert "58.33" in body_text  # direction_accuracy_pct
     assert "pred_path.png" in body_text
     assert "View commit" in body_text
+    # Ensure horizon label is explicit so users don't confuse
+    # "未来波动率" with cumulative longer-horizon vol
+    assert "T+1" in body_text, "volatility label should reference T+1"
 
 
 def test_build_card_failed_status_uses_error_icon(fake_summary_json):
@@ -68,6 +71,20 @@ def test_build_card_without_llm_summary_skips_section(fake_summary_json):
     # First section is the predictions/volatility section, NOT the AI block
     assert "AI 总结" not in first_text
     assert "本次关键预测" in first_text or "未来波动率" in first_text
+
+
+def test_build_card_with_horizon_vol_shows_t30_line(fake_summary_json):
+    """When volatility_by_horizon is provided, show T+30 cumulative as context."""
+    fake_summary_json["volatility_by_horizon"] = {
+        "1d": 0.0092, "5d": 0.0206, "10d": 0.0292,
+        "15d": 0.0357, "20d": 0.0413, "25d": 0.0461, "30d": 0.0505,
+    }
+    card = build_card(fake_summary_json)
+    body = json.dumps(card)
+    assert "T+1" in body, "primary T+1 vol label missing"
+    # T+30 secondary line should reference T+30
+    assert "30d" in body or "T+30" in body, \
+        "expected secondary T+30 line when volatility_by_horizon present"
 
 
 def test_build_card_html_escapes_llm_summary(fake_summary_json):

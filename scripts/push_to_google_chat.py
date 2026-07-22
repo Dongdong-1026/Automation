@@ -117,14 +117,19 @@ def build_card(summary: dict[str, Any]) -> dict[str, Any]:
                 "textParagraph": {"text": "<b>本次关键预测</b><br>" + "<br>".join(rows)}
             })
         vol = summary.get("volatility")
+        vol_by_horizon = summary.get("volatility_by_horizon") or {}
+        vol_t30 = vol_by_horizon.get("30d")
         direction = summary.get("direction")
+        # Show T+1 daily vol as primary (canonical "future volatility"),
+        # and T+30 cumulative vol as a secondary line for context.
+        vol_lines = [
+            f"<b>未来波动率（T+1 日级）：</b> {_fmt_pct(vol)}<br>"
+            f"<b>方向判断：</b> {direction or '—'}"
+        ]
+        if vol_t30 is not None:
+            vol_lines.append(f"<font color=\"#888888\">└ T+30 累计波动率参考：{_fmt_pct(vol_t30)}</font>")
         widgets.append({
-            "textParagraph": {
-                "text": (
-                    f"<b>未来波动率：</b> {_fmt_pct(vol)}<br>"
-                    f"<b>方向判断：</b> {direction or '—'}"
-                )
-            }
+            "textParagraph": {"text": "<br>".join(vol_lines)}
         })
     sections.append({"widgets": widgets})
 
