@@ -14,6 +14,7 @@ import argparse
 import csv
 import datetime as _dt
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -66,7 +67,8 @@ def _parse_proportional_report(report_path: Path) -> dict[str, Any] | None:
     """
     import re
     horizon_pat = re.compile(r"^T\+(\d+)\s*\|")
-    cell_pat = re.compile(r"([+-]?\d+\.\d+)")  # any signed decimal in a cell
+    # Match signed numbers with optional decimal part (so integer prices like 24500 work too).
+    cell_pat = re.compile(r"([+-]?\d+(?:\.\d+)?)")
     try:
         text = report_path.read_text(encoding="utf-8")
     except OSError:
@@ -79,26 +81,29 @@ def _parse_proportional_report(report_path: Path) -> dict[str, Any] | None:
         if not m:
             continue
         horizon_n = int(m.group(1))
-        # Extract 5 numbers: bear_price, bear_ret%, base_price, base_ret%, bull_price, bull_ret%, vol%
-        # Use a more robust pattern that captures "price (ret%)" pairs
-        # Try to find groups: bear price, bear ret, base price, base ret, bull price, bull ret, vol
         nums = cell_pat.findall(line)
-        # Expect at least 7 numbers; mapping: 0=bp, 1=br, 2=base_p, 3=base_r, 4=bull_p, 5=bull_r, 6=vol
-        if len(nums) < 7:
+        # Layout (after the regex change to also match integers):
+        #   0=horizon number, 1=year, 2=month, 3=day,
+        #   4=bear_price, 5=bear_ret%, 6=base_price, 7=base_ret%,
+        #   8=bull_price, 9=bull_ret%, 10=vol%
+        if len(nums) < 11:
             continue
         try:
-            # nums[1] is the return in PERCENT, e.g. -1.30 → divide by 100
-            base_return = float(nums[3]) / 100.0
-            vol = float(nums[6]) / 100.0  # vol also in percent
+            # nums[7] is the base return in PERCENT, e.g. 0.07 → divide by 100
+            base_return = float(nums[7]) / 100.0
+            vol = float(nums[10]) / 100.0  # vol also in percent
         except ValueError:
             continue
         horizon_to_ret[f"{horizon_n}d"] = base_return
         horizon_to_vol[f"{horizon_n}d"] = vol
-        # Optionally also store vol per horizon
-        # (kept simple: just predictions for now)
 
     if not horizon_to_ret:
         return None
+
+    # Annualized vol (T+1 daily vol × sqrt(252) — like VIX). Stored at percent scale
+    # so downstream UIs can render "~14.6%" without an extra factor of 100.
+    vol_t1_pct = horizon_to_vol.get("1d", 0.0) * 100.0
+    vol_ann = vol_t1_pct * math.sqrt(252)  # e.g. 0.92 × 15.87 ≈ 14.6
 
     # Determine direction by aggregating 1d return sign
     first_ret = next(iter(horizon_to_ret.values()), 0.0)
@@ -113,6 +118,7 @@ def _parse_proportional_report(report_path: Path) -> dict[str, Any] | None:
         "predictions": horizon_to_ret,
         "volatility": horizon_to_vol.get("1d", 0.0),  # daily vol (T+1 column) is the canonical "future vol"
         "volatility_by_horizon": horizon_to_vol,
+        "vol_ann": vol_ann,  # NEW: annualized vol (LSTM vol_head raw, VIX-style)
         "direction": direction,
         "source": str(report_path),
     }
@@ -210,6 +216,31 @@ def build_summary(
         summary["predictions"] = prediction.get("predictions")
         summary["volatility"] = prediction.get("volatility")
         summary["direction"] = prediction.get("direction")
+        # vol_ann may come from prediction_summary.json (TRAIN path) or from
+        # _parse_proportional_report (INFERENCE path) — either way, propagate.
+        if prediction.get("vol_ann") is not None:
+            summary["vol_ann"] = prediction["vol_ann"]
+
+    # Pattern attention (per-day, up to 81 patterns): read pattern_attention_full_report.csv
+    # which the notebook writes alongside the other artifacts. Each row has columns
+    # pattern, avg_attention, max_attention, min_attention, std_attention.
+    pattern_csv = run_dir / "pattern_attention_full_report.csv"
+    if pattern_csv.exists():
+        try:
+            with pattern_csv.open(encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                summary["pattern_attention"] = {
+                    (row.get("pattern") or ""): float(row["avg_attention"])
+                    for row in reader
+                    if row.get("pattern") and row.get("avg_attention") not in (None, "")
+                }
+        except (OSError, KeyError, ValueError, csv.Error) as exc:
+            summary["pattern_attention"] = {}
+            summary.setdefault("warnings", []).append(
+                f"pattern_attention parse failed: {exc}"
+            )
+    else:
+        summary["pattern_attention"] = {}
 
     summary["png_files"] = _list_pngs(run_dir, repo_owner, repo_name, branch)
 

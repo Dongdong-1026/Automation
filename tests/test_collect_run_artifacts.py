@@ -92,3 +92,41 @@ def test_parse_proportional_report_volatility_correct(fake_run_dir, monkeypatch)
     assert abs(parsed["predictions"]["1d"] - 0.0007) < 0.0001, f"T+1 return should be 0.0007, got {parsed['predictions']['1d']}"
     # Critical regression: T+30 return (3.65%) must NOT appear as volatility
     assert parsed["volatility"] < 0.1, f"volatility {parsed['volatility']} looks wrong (>10%) — old bug returns"
+
+
+def test_parse_report_extracts_vol_ann(fake_run_dir, monkeypatch):
+    """vol_ann (annualized) must be extracted from raw_vol field."""
+    from scripts.collect_run_artifacts import _parse_proportional_report
+    report = fake_run_dir / "Proportional_Inference_Report.txt"
+    report.write_text(
+        "Current T+0: 25000.00\n"
+        "T+1 | 2026-08-01 | 24500 (  -2%) | 25050 ( +0.20%) | 25600 ( +2.40%) | 0.92%\n"
+        "T+30 | 2026-08-30 | 22000 (-12%) | 25900 ( +3.60%) | 29800 (+19.20%) | 5.05%\n",
+        encoding="utf-8",
+    )
+    parsed = _parse_proportional_report(report)
+    assert parsed is not None
+    assert "vol_ann" in parsed, "vol_ann (annualized) must be exposed"
+    # vol_ann ~= T+1 vol x sqrt(252) ~= 0.92 x 15.87 ~= 14.6
+    assert abs(parsed["vol_ann"] - 14.60) < 0.5, f"expected ~14.6, got {parsed['vol_ann']}"
+
+
+def test_build_summary_includes_pattern_attention(fake_run_dir, fake_artifacts_root):
+    """pattern_attention dict must be populated from pattern_attention_full_report.csv."""
+    import csv
+    csv_path = fake_run_dir / "pattern_attention_full_report.csv"
+    with csv_path.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["pattern", "avg_attention", "max_attention", "min_attention", "std_attention"])
+        w.writeheader()
+        w.writerow({"pattern": "MA5_Cross_MA20_Bullish", "avg_attention": 0.082, "max_attention": 0.1, "min_attention": 0.05, "std_attention": 0.02})
+        w.writerow({"pattern": "Realized_Vol_GK", "avg_attention": 0.075, "max_attention": 0.09, "min_attention": 0.04, "std_attention": 0.018})
+    from scripts.collect_run_artifacts import build_summary
+    summary = build_summary(
+        run_dir=fake_run_dir,
+        root=fake_artifacts_root,
+        ticker="^HSI",
+        commit_sha=None,
+    )
+    assert "pattern_attention" in summary
+    assert "MA5_Cross_MA20_Bullish" in summary["pattern_attention"]
+    assert abs(summary["pattern_attention"]["MA5_Cross_MA20_Bullish"] - 0.082) < 0.001
