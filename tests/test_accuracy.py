@@ -121,3 +121,103 @@ def test_fetch_actuals_handles_empty(monkeypatch):
     monkeypatch.setattr(accuracy.yf, "Ticker", FakeYFinance().Ticker)
     result = accuracy.fetch_actuals("^HSI", "2026-07-20", "2026-07-25")
     assert result == {}
+
+
+# --------------------------------------------------------------------------
+# Hardened direction-accuracy tests (reviewer findings)
+# --------------------------------------------------------------------------
+
+def test_compute_direction_accuracy_length_mismatch_returns_none():
+    """Length mismatch must NEVER raise — return None per 'never raise' contract."""
+    from scripts.accuracy import compute_direction_accuracy
+    # No exception expected; returns None
+    assert compute_direction_accuracy([0.001, 0.002], [0.005]) is None
+    assert compute_direction_accuracy([0.001], [0.005, -0.001]) is None
+    assert compute_direction_accuracy([], []) is None
+
+
+def test_compute_direction_accuracy_handles_invalid_preds():
+    """None/NaN/nonnumeric predictions must be skipped, not raise."""
+    from scripts.accuracy import compute_direction_accuracy
+    preds = [0.001, None, math.nan, "bogus", 0.003]
+    actuals = [0.005, 0.006, 0.007, 0.008, -0.005]
+    # Index 0: +0.001 vs +0.005 -> correct
+    # Index 1: None pred -> skipped
+    # Index 2: NaN pred  -> skipped
+    # Index 3: nonnumeric pred -> skipped
+    # Index 4: +0.003 vs -0.005 -> wrong
+    # 1 correct / 2 total = 0.5
+    result = compute_direction_accuracy(preds, actuals)
+    assert result == pytest.approx(0.5)
+
+
+def test_compute_direction_accuracy_handles_np_float64_nan():
+    """np.float64 NaN must be detected as NaN (not just builtin float NaN)."""
+    import numpy as np
+    from scripts.accuracy import compute_direction_accuracy
+    preds = [0.001, np.float64(0.002), np.float64(0.003)]
+    actuals = [0.005, np.float64(math.nan), -0.005]
+    # Index 0: 0.001 vs 0.005 -> correct
+    # Index 1: actual is np.float64 NaN -> skipped
+    # Index 2: 0.003 vs -0.005 -> wrong
+    # 1 correct / 2 total = 0.5
+    result = compute_direction_accuracy(preds, actuals)
+    assert result == pytest.approx(0.5)
+
+
+def test_append_to_history_missing_header_recreates_file(tmp_path: Path):
+    """Existing file with malformed/empty header must be overwritten with a proper header."""
+    from scripts.accuracy import append_to_history
+    csv_path = tmp_path / "predictions_history.csv"
+    # Write a headerless / malformed file (just garbage)
+    csv_path.write_text("garbage,row,with,bad,header\n", encoding="utf-8")
+    row = {
+        "prediction_date": date(2026, 7, 22),
+        "ticker": "^HSI",
+        "T+1_pred": 0.0007,
+        "T+1_actual": None,
+        "T+1_correct": None,
+        "vol_ann": 14.6,
+        "direction": "up",
+        "top1_pattern": "P1",
+        "top1_weight": 0.1,
+    }
+    append_to_history(csv_path, row)
+    # File should have been re-created with the canonical header
+    with csv_path.open(encoding="utf-8") as f:
+        first_line = f.readline().strip()
+    # First column of the canonical header must be the canonical one
+    assert first_line.startswith("prediction_date")
+    # And the data row should also be there
+    with csv_path.open(encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["ticker"] == "^HSI"
+
+
+def test_append_to_history_handles_write_error(tmp_path: Path, monkeypatch):
+    """Filesystem errors during append must be swallowed (never raise)."""
+    from scripts.accuracy import append_to_history
+    csv_path = tmp_path / "predictions_history.csv"
+
+    from pathlib import Path as _Path
+
+    original_open = _Path.open
+
+    def _patched_open(self, *a, **kw):
+        if self == csv_path:
+            raise OSError("simulated disk full")
+        return original_open(self, *a, **kw)
+
+    monkeypatch.setattr(_Path, "open", _patched_open)
+    row = {
+        "prediction_date": date(2026, 7, 22),
+        "ticker": "^HSI",
+        "T+1_pred": 0.0007,
+        "vol_ann": 14.6,
+        "direction": "up",
+        "top1_pattern": "P1",
+        "top1_weight": 0.1,
+    }
+    # Must not raise — even though open() raises OSError
+    append_to_history(csv_path, row)
