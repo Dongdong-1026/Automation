@@ -81,6 +81,15 @@ def fake_summary_json() -> dict:
             "30d": 0.0389,
         },
         "volatility": 0.0182,
+        "volatility_by_horizon": {
+            "1d": 0.0182,
+            "5d": 0.0407,
+            "10d": 0.0576,
+            "15d": 0.0705,
+            "20d": 0.0814,
+            "25d": 0.0910,
+            "30d": 0.0997,
+        },
         "direction": "up",
         "png_files": [
             {"name": "pred_path.png", "url": "https://example.com/pred_path.png"},

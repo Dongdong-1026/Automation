@@ -121,15 +121,18 @@ def build_card(summary: dict[str, Any]) -> dict[str, Any]:
         vol_t1 = vol_by_horizon.get("1d", vol)  # daily (T+1) vol, falls back to top-level field
         vol_t30 = vol_by_horizon.get("30d")     # 30-day cumulative vol
         direction = summary.get("direction")
-        # Always label the headline with T+30 to match the user's mental model
-        # ("future volatility" implies the 1-month horizon, not 1-day).
-        # Falls back through T+30 → T+1 → top-level field if needed.
-        headline_horizon = "T+30 日级"
+        # Headline label and value must match semantically:
+        # - T+30 available → label "T+30 日级", show T+30 cumulative vol
+        # - Otherwise T+1 → label "T+1 日级", show T+1 daily vol
+        # - Otherwise → "—"
         if vol_t30 is not None:
+            headline_horizon = "T+30 日级"
             headline_vol = vol_t30
         elif vol_t1 is not None:
+            headline_horizon = "T+1 日级"
             headline_vol = vol_t1
         else:
+            headline_horizon = "—"
             headline_vol = vol
         vol_lines = [
             f"<b>未来波动率（{headline_horizon}）：</b> {_fmt_pct(headline_vol)}<br>"
