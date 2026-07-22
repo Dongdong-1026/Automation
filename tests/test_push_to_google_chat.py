@@ -25,7 +25,7 @@ def test_build_card_ok_includes_all_sections(fake_summary_json):
     assert "View commit" in body_text
     # Ensure horizon label is explicit so users don't confuse
     # "未来波动率" with cumulative longer-horizon vol
-    assert "T+1" in body_text, "volatility label should reference T+1"
+    assert "T+30" in body_text, "volatility label should reference T+30"
 
 
 def test_build_card_failed_status_uses_error_icon(fake_summary_json):
@@ -82,6 +82,7 @@ def test_build_card_with_horizon_vol_shows_t30_line(fake_summary_json):
     card = build_card(fake_summary_json)
     body = json.dumps(card)
     # T+30 cumulative vol is now the headline
+    # (T+30 日级 → T+30 日级 in JSON dump; check ASCII parts)
     assert "T+30" in body, "primary T+30 vol label missing"
     assert "5.05%" in body, "T+30 vol value should appear"
     # Daily σ mentioned in annotation
