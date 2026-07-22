@@ -70,3 +70,25 @@ def test_build_summary_no_review_csv(fake_run_dir):
     assert summary["latest_1d_review"] is None
     assert summary["status"] == "ok"
     assert summary["commit_sha"] is None
+
+def test_parse_proportional_report_volatility_correct(fake_run_dir, monkeypatch):
+    """Regression: volatility field must use actual vol column, not return ×16."""
+    from scripts.collect_run_artifacts import _parse_proportional_report
+    import json
+
+    # Add a properly formatted Proportional_Inference_Report to the fake run dir
+    report = fake_run_dir / "Proportional_Inference_Report.txt"
+    report.write_text("\u2501" * 89 + "\n"
+        "📌 Current T+0: 25226.77 | Conf: ±1.5σ\n"
+        "T+1      | 2026-07-22   |   24898.42 (  -1.30%) |   25245.44 (  +0.07%) |   25597.31 (  +1.47%) |     0.92%\n"
+        "T+5      | 2026-07-28   |   24097.72 (  -4.48%) |   24855.22 (  -1.47%) |   25636.53 (  +1.62%) |     2.06%\n"
+        "T+30     | 2026-09-01   |   24237.93 (  -3.92%) |   26146.93 (  +3.65%) |   28206.29 ( +11.81%) |     5.05%\n",
+        encoding="utf-8")
+
+    parsed = _parse_proportional_report(report)
+    assert parsed is not None
+    assert abs(parsed["volatility"] - 0.0092) < 0.0001, f"volatility should be 0.0092 (T+1 vol), got {parsed['volatility']}"
+    assert abs(parsed["volatility_by_horizon"]["30d"] - 0.0505) < 0.0001
+    assert abs(parsed["predictions"]["1d"] - 0.0007) < 0.0001, f"T+1 return should be 0.0007, got {parsed['predictions']['1d']}"
+    # Critical regression: T+30 return (3.65%) must NOT appear as volatility
+    assert parsed["volatility"] < 0.1, f"volatility {parsed['volatility']} looks wrong (>10%) — old bug returns"

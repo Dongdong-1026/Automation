@@ -72,7 +72,8 @@ def _parse_proportional_report(report_path: Path) -> dict[str, Any] | None:
     except OSError:
         return None
 
-    horizon_to_ret = {}
+    horizon_to_ret: dict[str, float] = {}
+    horizon_to_vol: dict[str, float] = {}
     for line in text.splitlines():
         m = horizon_pat.match(line)
         if not m:
@@ -92,6 +93,7 @@ def _parse_proportional_report(report_path: Path) -> dict[str, Any] | None:
         except ValueError:
             continue
         horizon_to_ret[f"{horizon_n}d"] = base_return
+        horizon_to_vol[f"{horizon_n}d"] = vol
         # Optionally also store vol per horizon
         # (kept simple: just predictions for now)
 
@@ -109,7 +111,8 @@ def _parse_proportional_report(report_path: Path) -> dict[str, Any] | None:
 
     return {
         "predictions": horizon_to_ret,
-        "volatility": horizon_to_ret.get("30d", 0.0) * 16,  # crude proxy
+        "volatility": horizon_to_vol.get("1d", 0.0),  # daily vol (T+1 column) is the canonical "future vol"
+        "volatility_by_horizon": horizon_to_vol,
         "direction": direction,
         "source": str(report_path),
     }
