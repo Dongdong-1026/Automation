@@ -1,0 +1,11 @@
+{
+  "ticker": "HSI",
+  "last_updated": "2026-07-23",
+  "summary": {
+    "overall_accuracy": null,
+    "samples_total": 0,
+    "months_covered": 0
+  },
+  "monthly_accuracy": {},
+  "best_predictions": []
+}

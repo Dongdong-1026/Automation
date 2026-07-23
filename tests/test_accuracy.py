@@ -389,3 +389,50 @@ def test_backfill_from_existing_run(tmp_path: Path):
     assert row["top1_pattern"] == "MA5_Cross"
     assert row["top1_weight"] == "0.08"
     assert row["direction"] == "up"  # T+1 base return +0.40% > 0
+
+
+# --------------------------------------------------------------------------
+# Task 7: workflow driver
+# --------------------------------------------------------------------------
+
+def test_accuracy_run_writes_history_data_and_html(tmp_path: Path, monkeypatch):
+    """CLI driver appends the summary and emits both GitHub Pages artifacts."""
+    import json
+    import sys
+    from scripts import accuracy_run
+
+    summary_path = tmp_path / "summary.json"
+    csv_path = tmp_path / "model_artifacts" / "HSI" / "predictions_history.csv"
+    data_path = tmp_path / "docs" / "accuracy_data.json"
+    html_path = tmp_path / "docs" / "accuracy.html"
+    summary_path.write_text(
+        json.dumps({
+            "vol_ann": 14.6,
+            "direction": "up",
+            "predictions": {"1d": 0.004, "5d": 0.008},
+            "pattern_attention": {"MA5_Cross": 0.08, "Vol_GK": 0.05},
+        }),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(accuracy_run, "update_actuals", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(sys, "argv", [
+        "accuracy_run.py",
+        "--summary", str(summary_path),
+        "--csv", str(csv_path),
+        "--ticker", "^HSI",
+        "--data-out", str(data_path),
+        "--html-out", str(html_path),
+    ])
+
+    accuracy_run.main()
+
+    with csv_path.open(encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["ticker"] == "HSI"
+    assert rows[0]["T+1_pred"] == "0.004"
+    assert rows[0]["top1_pattern"] == "MA5_Cross"
+    data = json.loads(data_path.read_text(encoding="utf-8"))
+    assert data["ticker"] == "^HSI"
+    assert "HSI 預測準確率分析" in html_path.read_text(encoding="utf-8")

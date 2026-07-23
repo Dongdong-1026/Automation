@@ -652,6 +652,75 @@ def fetch_actuals(ticker: str, start: str, end: str) -> dict[str, float]:
     return out
 
 
+def update_actuals(
+    csv_path: Path, rows: list[dict], ticker: str = "^HSI"
+) -> int:
+    """Fill realized actuals for historical predictions, without raising.
+
+    Returns the number of horizon cells updated. Future target dates and dates
+    without market data are left untouched.
+    """
+    try:
+        today = date.today()
+        if not isinstance(rows, list) or not rows:
+            return 0
+
+        prediction_dates: list[date] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                prediction_dates.append(date.fromisoformat(row["prediction_date"]))
+            except (ValueError, TypeError, KeyError):
+                continue
+        if not prediction_dates:
+            return 0
+
+        earliest = min(prediction_dates)
+        end = today + timedelta(days=30)
+        actuals = fetch_actuals(ticker, earliest.isoformat(), end.isoformat())
+        if not actuals:
+            return 0
+
+        updated = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                prediction_date = date.fromisoformat(row["prediction_date"])
+            except (ValueError, TypeError, KeyError):
+                continue
+            for horizon in (1, 5, 10, 15, 20, 25, 30):
+                target_date = prediction_date + timedelta(days=horizon)
+                if target_date > today:
+                    continue
+                actual = actuals.get(target_date.isoformat())
+                if actual is None:
+                    continue
+                prediction = _row_pred_for_horizon(row, f"{horizon}d")
+                if prediction is None or prediction == 0:
+                    continue
+                row[f"T+{horizon}_actual"] = f"{actual:.6f}"
+                row[f"T+{horizon}_correct"] = (
+                    "true" if (prediction > 0) == (actual > 0) else "false"
+                )
+                updated += 1
+
+        if updated:
+            with csv_path.open("w", encoding="utf-8", newline="") as file_obj:
+                writer = csv.DictWriter(
+                    file_obj, fieldnames=CSV_FIELDS, extrasaction="ignore"
+                )
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow({key: row.get(key, "") for key in CSV_FIELDS})
+        return updated
+    except Exception as exc:
+        print(f"[accuracy] WARNING: update_actuals failed: {exc}", file=sys.stderr)
+        return 0
+
+
+
 def build_accuracy_data(rows: list[dict], ticker: str = "^HSI") -> dict:
     """Build the full data dict for the accuracy page.
 

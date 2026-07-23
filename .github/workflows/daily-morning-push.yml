@@ -134,22 +134,6 @@ jobs:
           cp -f "$NEW_RUN"/*.json model_artifacts/latest/${TICKER_DIR}/ 2>/dev/null || true
           echo "NEW_RUN=$NEW_RUN" >> "$GITHUB_ENV"
 
-      - name: Commit latest artifacts
-        id: commit
-        continue-on-error: true
-        run: |
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
-          git add -f model_artifacts/latest/${TICKER_DIR}/
-          if git diff --staged --quiet; then
-            echo "No changes to commit."
-            echo "committed=false" >> "$GITHUB_OUTPUT"
-          else
-            git commit -m "[Auto] Morning push $(date -u +%Y-%m-%d) ${TICKER}"
-            git push
-            echo "committed=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Generate Step8 1D review (best effort)
         id: review
         continue-on-error: true
@@ -163,7 +147,7 @@ jobs:
         run: |
           set -e
           STATUS="${{ steps.inference.outputs.status }}"
-          COMMIT_SHA="${{ steps.commit.outputs.committed == 'true' && github.sha || 'none' }}"
+          COMMIT_SHA="${{ github.sha }}"
           python scripts/collect_run_artifacts.py \
             --run-dir "$NEW_RUN" \
             --root model_artifacts \
@@ -180,6 +164,38 @@ jobs:
           s['commit_sha'] = s.get('commit_sha') or '${{ github.sha }}'
           with open('summary.json','w') as f: json.dump(s, f, ensure_ascii=False)
           "
+
+      - name: Compute accuracy and emit page
+        id: accuracy
+        env:
+          GH_PAGES_REPO: ${{ github.repository }}
+        run: |
+          set -e
+          python scripts/accuracy_run.py \
+            --summary summary.json \
+            --csv model_artifacts/HSI/predictions_history.csv \
+            --ticker "^HSI" \
+            --data-out docs/accuracy_data.json \
+            --html-out docs/accuracy.html
+        continue-on-error: true
+
+      - name: Commit latest artifacts
+        id: commit
+        continue-on-error: true
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add -f model_artifacts/latest/${TICKER_DIR}/
+          git add -f model_artifacts/HSI/predictions_history.csv || true
+          git add -f docs/accuracy.html docs/accuracy_data.json || true
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "[Auto] Morning push $(date -u +%Y-%m-%d) ${TICKER}"
+            git push
+            echo "committed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Generate LLM summary
         id: llm
