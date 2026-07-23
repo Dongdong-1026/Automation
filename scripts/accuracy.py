@@ -19,6 +19,7 @@ Hardening contract (reviewer-driven):
 from __future__ import annotations
 
 import csv
+import html
 import json
 import math
 import numbers
@@ -623,15 +624,6 @@ def build_accuracy_data(rows: list[dict], ticker: str = "^HSI") -> dict:
         }
 
 
-def _bar(value: float, max_value: float, width: int = 30) -> str:
-    """Render a text bar chart as a string of filled/empty blocks."""
-    if max_value == 0:
-        return "░" * width
-    pct = max(0, min(1, value / max_value))
-    filled = round(pct * width)
-    return "▓" * filled + "░" * (width - filled)
-
-
 def _top_patterns_svg(top_patterns: list[dict]) -> str:
     """Render top 10 patterns as horizontal SVG bars."""
     if not top_patterns:
@@ -642,7 +634,7 @@ def _top_patterns_svg(top_patterns: list[dict]) -> str:
         w_px = (p["weight"] / max_w) * 280
         rows.append(
             f'<div class="pattern-row">'
-            f'<span class="pattern-name">{p["name"]}</span>'
+            f'<span class="pattern-name">{html.escape(str(p["name"]), quote=True)}</span>'
             f'<svg class="pattern-bar" width="280" height="14">'
             f'<rect x="0" y="0" width="{w_px:.1f}" height="14" fill="#1f883d"/>'
             f'</svg>'
@@ -662,7 +654,7 @@ def _monthly_bars_svg(monthly: dict[str, float]) -> str:
         w_px = acc * 2.5
         rows.append(
             f'<div class="month-row">'
-            f'<span class="month-name">{month}</span>'
+            f'<span class="month-name">{html.escape(str(month), quote=True)}</span>'
             f'<svg class="month-bar" width="250" height="18">'
             f'<rect x="0" y="0" width="{w_px:.1f}" height="18" fill="#0969da"/>'
             f'</svg>'
@@ -673,7 +665,14 @@ def _monthly_bars_svg(monthly: dict[str, float]) -> str:
 
 
 def render_html(data: dict) -> str:
-    """Render the accuracy data dict as a self-contained HTML page."""
+    """Render the accuracy data dict as a self-contained HTML page.
+
+    All CSV-derived values interpolated into the HTML body are passed
+    through :func:`html.escape` (with ``quote=True``) to neutralise XSS
+    attempts in pattern names, ticker symbol, month labels, and dates.
+    The static page is served from GitHub Pages, where a malicious
+    prediction row could otherwise inject script tags or onerror handlers.
+    """
     last_updated = data.get("last_updated", "")
     summary = data.get("summary", {})
     monthly = data.get("monthly_accuracy", {})
@@ -693,8 +692,8 @@ def render_html(data: dict) -> str:
             actual_num = actual_val if isinstance(actual_val, (int, float)) else 0
             err = abs(pred_num - actual_num) * 100
             best_table_rows.append(
-                f'<tr><td>{b.get("target_date","")}</td>'
-                f'<td>{b.get("prediction_date","")}</td>'
+                f'<tr><td>{html.escape(str(b.get("target_date","")), quote=True)}</td>'
+                f'<td>{html.escape(str(b.get("prediction_date","")), quote=True)}</td>'
                 f'<td>{pred_num*100:+.2f}%</td>'
                 f'<td>{actual_num*100:+.2f}%</td>'
                 f'<td>{err:.2f}%</td></tr>'
@@ -705,6 +704,11 @@ def render_html(data: dict) -> str:
     # Find the best prediction (lowest error) for top-10 display
     top_pred = best[0] if best else None
     top_patterns_svg = _top_patterns_svg(top_pred["top_patterns"]) if top_pred else "<p class=\"empty\">無資料</p>"
+
+    # Header interpolation values are escaped once per render to keep the
+    # f-string below readable.
+    last_updated_esc = html.escape(str(last_updated), quote=True)
+    ticker_esc = html.escape(str(data.get("ticker", "")), quote=True)
 
     return f"""<!DOCTYPE html>
 <html lang="zh-Hant">
@@ -735,7 +739,7 @@ def render_html(data: dict) -> str:
 </head>
 <body>
 <h1>HSI 預測準確率分析</h1>
-<p class="meta">最後更新：{last_updated} | 標的：{data.get("ticker","")}</p>
+<p class="meta">最後更新：{last_updated_esc} | 標的：{ticker_esc}</p>
 
 <h2>整體概覽</h2>
 <div class="summary">

@@ -285,6 +285,63 @@ def test_render_html_contains_key_sections():
     assert "MA5" in html  # pattern name appears
 
 
+def test_render_html_escapes_user_content():
+    """Pattern names / ticker / dates containing HTML must be escaped (XSS).
+
+    Since docs/accuracy.html is served as a public GitHub Pages asset, a
+    malicious prediction row could otherwise inject <script> / <img
+    onerror=...> tags into the page. render_html must always pass every
+    CSV-derived string through html.escape() before interpolation.
+    """
+    from scripts.accuracy import render_html
+    payload = '<script>alert("xss")</script>'
+    img_payload = '<img src=x onerror=alert(1)>'
+    data = {
+        "ticker": payload,
+        "last_updated": "2026-07-22<b>boom</b>",
+        "summary": {
+            "overall_accuracy": 0.5,
+            "samples_total": 1,
+            "months_covered": 1,
+        },
+        "monthly_accuracy": {
+            "2026-07": 1.0,
+        },
+        "best_predictions": [
+            {
+                "target_date": "2026-07-22",
+                "prediction_date": "2026-07-21",
+                "horizon": "1d",
+                "pred": 0.001,
+                "actual": 0.002,
+                "top_patterns": [
+                    {"name": img_payload, "weight": 0.08},
+                    {"name": "<safe_pattern>", "weight": 0.04},
+                ],
+            },
+            {
+                "target_date": "2026-07-15",
+                "prediction_date": "2026-07-10",
+                "horizon": "5d",
+                "pred": 0.003,
+                "actual": 0.004,
+                "top_patterns": [],
+            },
+        ],
+    }
+    out = render_html(data)
+    # Live XSS payloads must NOT survive into the rendered HTML.
+    assert payload not in out, "raw <script> tag leaked into rendered HTML"
+    assert img_payload not in out, "raw <img onerror> tag leaked into rendered HTML"
+    # Their HTML-escaped forms must be present instead.
+    assert "&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;" in out
+    assert "&lt;img src=x onerror=alert(1)&gt;" in out
+    # Defensive coverage for pattern names, ticker, dates, and bold-breakout attempts.
+    assert "&lt;safe_pattern&gt;" in out
+    assert "2026-07-22" in out  # dates that already contain no metacharacters are unchanged
+    assert "2026-07-22&lt;b&gt;boom&lt;/b&gt;" in out
+
+
 def test_find_best_prediction_for_target_picks_lowest_error():
     """Given multiple predictions for the same target date, return the one with min |pred - actual|."""
     from scripts.accuracy import find_best_prediction_for_target
