@@ -542,25 +542,50 @@ def _row_actual_for_horizon(row: Any, horizon: Any) -> float | None:
         return None
 
 
+_ALL_HORIZONS: tuple[int, ...] = (1, 5, 10, 15, 20, 25, 30)
+
+
+def _row_correct_for_horizon(row: dict, horizon_days_value: int, pred: float, actual: float) -> bool:
+    """Read the stored T+N_correct flag if present, else derive from sign match."""
+    correct_value = row.get(f"T+{horizon_days_value}_correct")
+    if isinstance(correct_value, str):
+        normalized = correct_value.strip().lower()
+        if normalized in {"true", "1"}:
+            return True
+        if normalized in {"false", "0"}:
+            return False
+        return (pred > 0 and actual > 0) or (pred < 0 and actual < 0)
+    if isinstance(correct_value, bool):
+        return correct_value
+    return (pred > 0 and actual > 0) or (pred < 0 and actual < 0)
+
+
 def compute_monthly_accuracy(
-    rows: Any, horizon: str = "1d"
+    rows: Any, horizon: str | None = "1d"
 ) -> dict[str, float]:
     """Group rows by prediction month and compute direction accuracy.
+
+    ``horizon``: a single horizon label like ``"1d"`` restricts the
+    calculation to that horizon only (e.g. just next-day predictions).
+    Pass ``None`` to aggregate across *all* supported horizons
+    (1/5/10/15/20/25/30 days) combined per month — this matches how the
+    manually-tracked Excel review counts monthly accuracy (every horizon's
+    settled prediction counts toward the month it was predicted in).
 
     Unrealized or malformed rows are skipped. Returns an empty mapping for
     invalid input and never raises.
     """
-    if not isinstance(rows, list) or _horizon_days(horizon) is None:
+    if not isinstance(rows, list):
         return {}
+    if horizon is not None and _horizon_days(horizon) is None:
+        return {}
+
+    horizons_to_check = _ALL_HORIZONS if horizon is None else (_horizon_days(horizon),)
 
     monthly: dict[str, list[float]] = {}
     try:
         for row in rows:
             if not isinstance(row, dict):
-                continue
-            pred = _row_pred_for_horizon(row, horizon)
-            actual = _row_actual_for_horizon(row, horizon)
-            if pred is None or pred == 0 or actual is None:
                 continue
             pred_date = row.get("prediction_date")
             if isinstance(pred_date, (date, datetime)):
@@ -571,20 +596,13 @@ def compute_monthly_accuracy(
                 month_key = date.fromisoformat(pred_date).strftime("%Y-%m")
             except (ValueError, TypeError):
                 continue
-            correct_value = row.get(f"T+{_horizon_days(horizon)}_correct")
-            if isinstance(correct_value, str):
-                normalized = correct_value.strip().lower()
-                if normalized in {"true", "1"}:
-                    correct = True
-                elif normalized in {"false", "0"}:
-                    correct = False
-                else:
-                    correct = (pred > 0 and actual > 0) or (pred < 0 and actual < 0)
-            elif isinstance(correct_value, bool):
-                correct = correct_value
-            else:
-                correct = (pred > 0 and actual > 0) or (pred < 0 and actual < 0)
-            monthly.setdefault(month_key, []).append(1.0 if correct else 0.0)
+            for h_days in horizons_to_check:
+                pred = _row_pred_for_horizon(row, h_days)
+                actual = _row_actual_for_horizon(row, h_days)
+                if pred is None or pred == 0 or actual is None:
+                    continue
+                correct = _row_correct_for_horizon(row, h_days, pred, actual)
+                monthly.setdefault(month_key, []).append(1.0 if correct else 0.0)
     except Exception as exc:
         print(f"[accuracy] WARNING: monthly accuracy failed: {exc}", file=sys.stderr)
         return {}
@@ -825,7 +843,8 @@ def build_accuracy_data(rows: list[dict], ticker: str = "^HSI") -> dict:
 
     Aggregates:
       - ``monthly_accuracy`` by calling :func:`compute_monthly_accuracy`
-        for the 1-day horizon.
+        with all horizons combined (matches the Excel review's convention:
+        every settled T+N prediction counts toward its prediction month).
       - ``summary.overall_accuracy`` across all supported horizons
         (1, 5, 10, 15, 20, 25, 30 days), counting only rows where both
         pred and actual are valid, non-zero, and non-NaN.
@@ -838,7 +857,9 @@ def build_accuracy_data(rows: list[dict], ticker: str = "^HSI") -> dict:
     try:
         from datetime import date as _date, timedelta as _timedelta
 
-        monthly = compute_monthly_accuracy(rows, horizon="1d")
+        # horizon=None aggregates all 7 horizons per month, matching the
+        # manually-tracked Excel review's monthly accuracy convention.
+        monthly = compute_monthly_accuracy(rows, horizon=None)
 
         # Overall: average across all horizons with non-null actuals
         overall_correct = 0

@@ -7,7 +7,8 @@ Card structure (top to bottom):
   3. Key predictions (7 horizons)
   4. 1D hit summary (if available)
   5. PNG charts (excluding Volatility_Path.png)
-  6. View commit button + footer
+  6. Links: accuracy report page + historical data on GitHub
+  7. View commit button + footer
 """
 
 from __future__ import annotations
@@ -26,6 +27,16 @@ DEFAULT_TIMEOUT = 15
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 EXCLUDED_PNGS = {"Proportional_Inference_Report.txt", "run_metrics.json"}
 VOL_PNG_NAME = "Step8_Volatility_Path.png"  # excluded from push per user request
+
+# Static links for this project's GitHub Pages accuracy report and the
+# underlying data file it's built from (both live in the Dongdong-1026/
+# Automation repo). These aren't derived per-run, so they're hardcoded
+# rather than threaded through summary.json.
+ACCURACY_PAGE_URL = "https://dongdong-1026.github.io/Automation/accuracy.html"
+ACCURACY_DATA_REPO_URL = (
+    "https://github.com/Dongdong-1026/Automation/blob/main/"
+    "model_artifacts/HSI/predictions_history.csv"
+)
 
 
 def _status_emoji(status: str) -> str:
@@ -189,6 +200,25 @@ def build_card(summary: dict[str, Any]) -> dict[str, Any]:
             "header": "🖼️ 預測圖",
             "widgets": _png_widgets(png_files),
         })
+
+    # Section 4.5: Links to the accuracy report page + the underlying
+    # historical data on GitHub.
+    sections.append({
+        "widgets": [{
+            "buttonList": {
+                "buttons": [
+                    {
+                        "text": "📈 查看準確率分析",
+                        "onClick": {"openLink": {"url": ACCURACY_PAGE_URL}},
+                    },
+                    {
+                        "text": "🗂️ 查看歷史數據 (GitHub)",
+                        "onClick": {"openLink": {"url": ACCURACY_DATA_REPO_URL}},
+                    },
+                ]
+            }
+        }]
+    })
 
     # Section 5: Footer with View commit button
     sha = summary.get("commit_sha") or ""

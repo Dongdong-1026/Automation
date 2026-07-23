@@ -255,6 +255,28 @@ def test_compute_monthly_accuracy_skips_unrealized():
     assert result["2026-07"] == 1.0
 
 
+def test_compute_monthly_accuracy_none_horizon_combines_all_horizons():
+    """horizon=None must aggregate every settled T+N horizon together per
+    month, matching the Excel review's monthly accuracy convention (not
+    just T+1)."""
+    from scripts.accuracy import compute_monthly_accuracy
+    rows = [
+        # Single prediction day, but 3 different settled horizons:
+        # T+1 correct, T+5 wrong, T+10 correct -> 2/3 for this row alone.
+        {
+            "prediction_date": "2026-07-15",
+            "T+1_pred": "0.001", "T+1_actual": "0.002", "T+1_correct": "true",
+            "T+5_pred": "0.001", "T+5_actual": "-0.002", "T+5_correct": "false",
+            "T+10_pred": "-0.001", "T+10_actual": "-0.002", "T+10_correct": "true",
+        },
+    ]
+    only_t1 = compute_monthly_accuracy(rows, horizon="1d")
+    assert only_t1["2026-07"] == 1.0  # just the single T+1 sample, which was correct
+
+    all_horizons = compute_monthly_accuracy(rows, horizon=None)
+    assert all_horizons["2026-07"] == pytest.approx(2 / 3)  # 2 correct out of 3 settled horizons
+
+
 def test_build_accuracy_data_structure():
     """Output JSON has all required top-level keys."""
     from scripts.accuracy import build_accuracy_data

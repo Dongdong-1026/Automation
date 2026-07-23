@@ -33,6 +33,10 @@ def test_build_card_ok_includes_all_sections(fake_summary_json):
     assert "pred_path.png" in body_text
     # Button present
     assert "View commit" in body_text
+    # Links to the accuracy report page + the underlying GitHub data
+    assert "dongdong-1026.github.io/Automation/accuracy.html" in body_text
+    assert "github.com/Dongdong-1026/Automation" in body_text
+    assert "predictions_history.csv" in body_text
 
 
 def test_build_card_failed_status_uses_error_icon(fake_summary_json):
