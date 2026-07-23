@@ -677,10 +677,26 @@ def update_actuals(
             return 0
 
         earliest = min(prediction_dates)
+        # Need the close on (or just before) each prediction date as the T+0
+        # baseline, so fetch a few days earlier than the earliest prediction.
+        start = earliest - timedelta(days=7)
         end = today + timedelta(days=30)
-        actuals = fetch_actuals(ticker, earliest.isoformat(), end.isoformat())
+        actuals = fetch_actuals(ticker, start.isoformat(), end.isoformat())
         if not actuals:
             return 0
+
+        sorted_actual_dates = sorted(date.fromisoformat(d) for d in actuals)
+
+        def _close_on_or_before(d: date) -> float | None:
+            """Most recent close at or before date `d` (handles weekends/holidays)."""
+            candidate = None
+            for actual_date in sorted_actual_dates:
+                if actual_date > d:
+                    break
+                candidate = actual_date
+            if candidate is None:
+                return None
+            return actuals.get(candidate.isoformat())
 
         updated = 0
         for row in rows:
@@ -690,19 +706,27 @@ def update_actuals(
                 prediction_date = date.fromisoformat(row["prediction_date"])
             except (ValueError, TypeError, KeyError):
                 continue
+            baseline_close = _close_on_or_before(prediction_date)
+            if baseline_close is None or baseline_close == 0:
+                continue
             for horizon in (1, 5, 10, 15, 20, 25, 30):
                 target_date = prediction_date + timedelta(days=horizon)
                 if target_date > today:
                     continue
-                actual = actuals.get(target_date.isoformat())
-                if actual is None:
+                target_close = _close_on_or_before(target_date)
+                if target_close is None:
                     continue
                 prediction = _row_pred_for_horizon(row, f"{horizon}d")
                 if prediction is None or prediction == 0:
                     continue
-                row[f"T+{horizon}_actual"] = f"{actual:.6f}"
+                # Compare like-for-like: actual return relative to the T+0
+                # close on the prediction date, not the raw close price
+                # (which is always positive and would make direction
+                # accuracy trivially track sign(prediction)).
+                actual_return = (target_close - baseline_close) / baseline_close
+                row[f"T+{horizon}_actual"] = f"{actual_return:.6f}"
                 row[f"T+{horizon}_correct"] = (
-                    "true" if (prediction > 0) == (actual > 0) else "false"
+                    "true" if (prediction > 0) == (actual_return > 0) else "false"
                 )
                 updated += 1
 

@@ -436,3 +436,52 @@ def test_accuracy_run_writes_history_data_and_html(tmp_path: Path, monkeypatch):
     data = json.loads(data_path.read_text(encoding="utf-8"))
     assert data["ticker"] == "^HSI"
     assert "HSI 預測準確率分析" in html_path.read_text(encoding="utf-8")
+
+
+def test_update_actuals_compares_return_not_raw_price(tmp_path: Path, monkeypatch):
+    """T+N_actual must be a return relative to the T+0 close, not the raw
+    closing price. A raw price is always positive, which would make
+    T+N_correct trivially equal to (prediction > 0) and break accuracy."""
+    from scripts import accuracy
+
+    csv_path = tmp_path / "predictions_history.csv"
+    # Prediction made on 2026-07-20: model predicted a *down* move (-0.5%) for T+1.
+    row = {
+        "prediction_date": "2026-07-20",
+        "ticker": "HSI",
+        "T+1_pred": "-0.005",
+        "T+1_actual": "",
+        "T+1_correct": "",
+        "vol_ann": "14.6",
+        "direction": "down",
+    }
+    accuracy.append_to_history(csv_path, row)
+
+    # Baseline close on prediction date is 25000; T+1 close is 24800
+    # (an actual drop of -0.8%), so the prediction's direction was correct.
+    fake_actuals = {
+        "2026-07-20": 25000.0,
+        "2026-07-21": 24800.0,
+    }
+    monkeypatch.setattr(accuracy, "fetch_actuals", lambda *a, **k: fake_actuals)
+    monkeypatch.setattr(accuracy, "date", accuracy.date)  # no-op, keep real date
+    real_today = accuracy.date(2026, 7, 23)
+
+    class _FixedDate(accuracy.date):
+        @classmethod
+        def today(cls):
+            return real_today
+
+    monkeypatch.setattr(accuracy, "date", _FixedDate)
+
+    with csv_path.open(encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    updated = accuracy.update_actuals(csv_path, rows, ticker="^HSI")
+    assert updated == 1
+
+    with csv_path.open(encoding="utf-8") as f:
+        rows_after = list(csv.DictReader(f))
+    actual_return = float(rows_after[0]["T+1_actual"])
+    # Must be the -0.8% return, NOT the raw price (24800.0)
+    assert actual_return == pytest.approx((24800.0 - 25000.0) / 25000.0)
+    assert rows_after[0]["T+1_correct"] == "true"
