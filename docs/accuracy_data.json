@@ -1,11 +1,22 @@
 {
-  "ticker": "HSI",
+  "ticker": "^HSI",
   "last_updated": "2026-07-23",
   "summary": {
-    "overall_accuracy": null,
-    "samples_total": 0,
-    "months_covered": 0
+    "overall_accuracy": 0.0,
+    "samples_total": 1,
+    "months_covered": 1
   },
-  "monthly_accuracy": {},
-  "best_predictions": []
+  "monthly_accuracy": {
+    "2026-07": 0.0
+  },
+  "best_predictions": [
+    {
+      "target_date": "2026-07-22",
+      "prediction_date": "2026-07-21",
+      "horizon": "?",
+      "pred": 0.0007,
+      "actual": -0.009535,
+      "top_patterns": []
+    }
+  ]
 }
