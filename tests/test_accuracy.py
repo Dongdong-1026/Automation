@@ -221,3 +221,52 @@ def test_append_to_history_handles_write_error(tmp_path: Path, monkeypatch):
     }
     # Must not raise — even though open() raises OSError
     append_to_history(csv_path, row)
+
+
+# --------------------------------------------------------------------------
+# Task 3: monthly aggregation + best-prediction-day finder
+# --------------------------------------------------------------------------
+
+def test_compute_monthly_accuracy_groups_by_month():
+    """Returns dict keyed by YYYY-MM string with accuracy per month."""
+    from scripts.accuracy import compute_monthly_accuracy
+    rows = [
+        # 2026-06: 2 correct out of 2
+        {"prediction_date": "2026-06-15", "T+1_pred": "0.001", "T+1_actual": "0.002", "T+1_correct": "true"},
+        {"prediction_date": "2026-06-16", "T+1_pred": "-0.001", "T+1_actual": "-0.003", "T+1_correct": "true"},
+        # 2026-07: 1 correct, 1 wrong out of 2
+        {"prediction_date": "2026-07-15", "T+1_pred": "0.001", "T+1_actual": "0.002", "T+1_correct": "true"},
+        {"prediction_date": "2026-07-16", "T+1_pred": "0.001", "T+1_actual": "-0.002", "T+1_correct": "false"},
+    ]
+    result = compute_monthly_accuracy(rows, horizon="1d")
+    assert result["2026-06"] == 1.0  # 2/2
+    assert result["2026-07"] == 0.5  # 1/2
+
+
+def test_compute_monthly_accuracy_skips_unrealized():
+    """Rows with null actuals (NaN/empty) are excluded."""
+    from scripts.accuracy import compute_monthly_accuracy
+    rows = [
+        {"prediction_date": "2026-07-15", "T+1_pred": "0.001", "T+1_actual": "", "T+1_correct": ""},
+        {"prediction_date": "2026-07-16", "T+1_pred": "0.002", "T+1_actual": "-0.001", "T+1_correct": "true"},
+    ]
+    result = compute_monthly_accuracy(rows, horizon="1d")
+    # Only 1 valid sample, 100% correct
+    assert result["2026-07"] == 1.0
+
+
+def test_find_best_prediction_for_target_picks_lowest_error():
+    """Given multiple predictions for the same target date, return the one with min |pred - actual|."""
+    from scripts.accuracy import find_best_prediction_for_target
+    rows = [
+        # Target 2026-07-20
+        # Prediction from 2026-07-19 (T+1): predicted +0.2%, actual +0.5%, error 0.3%
+        {"prediction_date": "2026-07-19", "T+1_pred": "0.002", "T+1_actual": "0.005", "T+1_correct": "false"},
+        # Prediction from 2026-07-15 (T+5): predicted +0.4%, actual +0.5%, error 0.1% ← BEST
+        {"prediction_date": "2026-07-15", "T+5_pred": "0.004", "T+5_actual": "0.005", "T+5_correct": "true"},
+        # Prediction from 2026-07-13 (T+7): predicted +0.6%, actual +0.5%, error 0.1%
+        {"prediction_date": "2026-07-13", "T+7_pred": "0.006", "T+7_actual": "0.005", "T+7_correct": "true"},
+    ]
+    best = find_best_prediction_for_target(rows, target_date="2026-07-20")
+    assert best is not None
+    assert best["prediction_date"] == "2026-07-15"  # T+5 had error 0.1, T+7 also 0.1, picks first

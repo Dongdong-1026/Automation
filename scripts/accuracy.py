@@ -238,6 +238,162 @@ def compute_direction_accuracy(
     return correct / total
 
 
+def _parse_float(value: Any) -> float | None:
+    """Parse a finite numeric value, returning None for invalid input."""
+    try:
+        if value is None or isinstance(value, bool):
+            return None
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            return None
+        return parsed
+    except Exception:
+        return None
+
+
+def _horizon_days(horizon: Any) -> int | None:
+    """Normalize horizon forms such as ``1``, ``"1"``, and ``"1d"``."""
+    try:
+        value = horizon[:-1] if isinstance(horizon, str) and horizon.endswith("d") else horizon
+        days = int(value)
+        return days if days > 0 else None
+    except Exception:
+        return None
+
+
+def _row_pred_for_horizon(row: Any, horizon: Any) -> float | None:
+    """Extract a prediction value for a horizon such as ``"1d"``."""
+    try:
+        if not isinstance(row, dict):
+            return None
+        days = _horizon_days(horizon)
+        if days is None:
+            return None
+        return _parse_float(row.get(f"T+{days}_pred"))
+    except Exception:
+        return None
+
+
+def _row_actual_for_horizon(row: Any, horizon: Any) -> float | None:
+    """Extract an actual value for a horizon such as ``"1d"``."""
+    try:
+        if not isinstance(row, dict):
+            return None
+        days = _horizon_days(horizon)
+        if days is None:
+            return None
+        return _parse_float(row.get(f"T+{days}_actual"))
+    except Exception:
+        return None
+
+
+def compute_monthly_accuracy(
+    rows: Any, horizon: str = "1d"
+) -> dict[str, float]:
+    """Group rows by prediction month and compute direction accuracy.
+
+    Unrealized or malformed rows are skipped. Returns an empty mapping for
+    invalid input and never raises.
+    """
+    if not isinstance(rows, list) or _horizon_days(horizon) is None:
+        return {}
+
+    monthly: dict[str, list[float]] = {}
+    try:
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            pred = _row_pred_for_horizon(row, horizon)
+            actual = _row_actual_for_horizon(row, horizon)
+            if pred is None or pred == 0 or actual is None:
+                continue
+            pred_date = row.get("prediction_date")
+            if isinstance(pred_date, (date, datetime)):
+                pred_date = pred_date.isoformat()
+            if not isinstance(pred_date, str):
+                continue
+            try:
+                month_key = date.fromisoformat(pred_date).strftime("%Y-%m")
+            except (ValueError, TypeError):
+                continue
+            correct_value = row.get(f"T+{_horizon_days(horizon)}_correct")
+            if isinstance(correct_value, str):
+                normalized = correct_value.strip().lower()
+                if normalized in {"true", "1"}:
+                    correct = True
+                elif normalized in {"false", "0"}:
+                    correct = False
+                else:
+                    correct = (pred > 0 and actual > 0) or (pred < 0 and actual < 0)
+            elif isinstance(correct_value, bool):
+                correct = correct_value
+            else:
+                correct = (pred > 0 and actual > 0) or (pred < 0 and actual < 0)
+            monthly.setdefault(month_key, []).append(1.0 if correct else 0.0)
+    except Exception as exc:
+        print(f"[accuracy] WARNING: monthly accuracy failed: {exc}", file=sys.stderr)
+        return {}
+
+    return {month: sum(values) / len(values) for month, values in monthly.items() if values}
+
+
+def find_best_prediction_for_target(
+    rows: Any, target_date: str, horizon: Any = None
+) -> dict | None:
+    """Return the lowest-error row whose effective target matches a date.
+
+    When ``horizon`` is None, all supported horizons are searched. Ties are
+    resolved by the shorter horizon. Invalid input is skipped and never raises.
+    """
+    if not isinstance(rows, list) or not isinstance(target_date, str):
+        return None
+    try:
+        target = date.fromisoformat(target_date).isoformat()
+    except (ValueError, TypeError):
+        return None
+
+    requested_horizon = None
+    if horizon is not None:
+        requested_horizon = _horizon_days(horizon)
+        if requested_horizon is None:
+            return None
+
+    candidates: list[tuple[float, int, dict]] = []
+    try:
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            pred_date = row.get("prediction_date")
+            if isinstance(pred_date, datetime):
+                pred_date = pred_date.date()
+            elif isinstance(pred_date, str):
+                try:
+                    pred_date = date.fromisoformat(pred_date)
+                except (ValueError, TypeError):
+                    continue
+            if not isinstance(pred_date, date):
+                continue
+
+            for days in (1, 5, 7, 10, 15, 20, 25, 30):
+                if requested_horizon is not None and days != requested_horizon:
+                    continue
+                pred = _row_pred_for_horizon(row, days)
+                actual = _row_actual_for_horizon(row, days)
+                if pred is None or actual is None:
+                    continue
+                if (pred_date + timedelta(days=days)).isoformat() != target:
+                    continue
+                candidates.append((abs(pred - actual), days, row))
+    except Exception as exc:
+        print(f"[accuracy] WARNING: best-prediction search failed: {exc}", file=sys.stderr)
+        return None
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda candidate: (candidate[0], candidate[1]))
+    return candidates[0][2]
+
+
 def fetch_actuals(ticker: str, start: str, end: str) -> dict[str, float]:
     """Fetch close prices from yfinance between start and end dates.
 
