@@ -81,8 +81,8 @@ jobs:
           RUN_AUTO: "1"
           TICKER: ${{ matrix.ticker }}
           RUN_MODE: "TRAIN"
-          RUN_FS: "1"
-          RUN_HPO: "1"
+          RUN_FS: "True"
+          RUN_HPO: "True"
           VOL_STRATEGY: "mean"
           VOL_VALUE: "0"
           ALLTICK_API_KEY: ${{ secrets.ALLTICK_API_KEY }}

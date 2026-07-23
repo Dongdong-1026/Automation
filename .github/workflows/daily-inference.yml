@@ -77,8 +77,8 @@ jobs:
       - name: Run INFERENCE mode
         env:
           RUN_MODE: INFERENCE
-          RUN_FS: "0"
-          RUN_HPO: "0"
+          RUN_FS: "False"
+          RUN_HPO: "False"
           VOL_STRATEGY: mean
           VOL_VALUE: "0"
           TICKER: ${{ matrix.ticker }}
@@ -100,12 +100,12 @@ jobs:
             -p RUN_AUTO "$RUN_AUTO"; then
             echo "✅ INFERENCE succeeded."
           else
-            echo "⚠️ INFERENCE failed, attempting bootstrap TRAIN (RUN_FS=0, RUN_HPO=0)..."
+            echo "⚠️ INFERENCE failed, attempting bootstrap TRAIN (RUN_FS=False, RUN_HPO=False)..."
             papermill LSTM_twotarget_v3_P5_diag.ipynb "$TRAIN_NOTEBOOK" \
               -p TICKER "$TICKER" \
               -p RUN_MODE "TRAIN" \
-              -p RUN_FS "0" \
-              -p RUN_HPO "0" \
+              -p RUN_FS "False" \
+              -p RUN_HPO "False" \
               -p VOL_STRATEGY "$VOL_STRATEGY" \
               -p VOL_VALUE "$VOL_VALUE" \
               -p RUN_AUTO "$RUN_AUTO"
@@ -114,8 +114,8 @@ jobs:
             papermill LSTM_twotarget_v3_P5_diag.ipynb "$INFER_NOTEBOOK" \
               -p TICKER "$TICKER" \
               -p RUN_MODE "INFERENCE" \
-              -p RUN_FS "0" \
-              -p RUN_HPO "0" \
+              -p RUN_FS "False" \
+              -p RUN_HPO "False" \
               -p VOL_STRATEGY "$VOL_STRATEGY" \
               -p VOL_VALUE "$VOL_VALUE" \
               -p RUN_AUTO "$RUN_AUTO"

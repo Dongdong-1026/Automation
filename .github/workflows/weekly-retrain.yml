@@ -80,8 +80,8 @@ jobs:
       - name: Run feature selection
         env:
           RUN_MODE: TRAIN
-          RUN_FS: "1"
-          RUN_HPO: "0"
+          RUN_FS: "True"
+          RUN_HPO: "False"
           VOL_STRATEGY: mean
           VOL_VALUE: "0"
           TICKER: ${{ matrix.ticker }}
