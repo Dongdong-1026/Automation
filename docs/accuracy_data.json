@@ -2,12 +2,16 @@
   "ticker": "^HSI",
   "last_updated": "2026-07-23",
   "summary": {
-    "overall_accuracy": 0.0,
-    "samples_total": 1,
-    "months_covered": 1
+    "overall_accuracy": 0.4592391304347826,
+    "samples_total": 368,
+    "months_covered": 5
   },
   "monthly_accuracy": {
-    "2026-07": 0.0
+    "2026-03": 0.5294117647058824,
+    "2026-04": 0.4166666666666667,
+    "2026-05": 0.45454545454545453,
+    "2026-06": 0.35,
+    "2026-07": 0.25
   },
   "best_predictions": [
     {
