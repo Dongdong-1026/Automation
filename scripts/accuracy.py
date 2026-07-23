@@ -81,6 +81,185 @@ def _is_numeric(v: Any) -> bool:
     return isinstance(v, numbers.Real)
 
 
+def _sign(x: Any) -> str:
+    """Return ``"up"`` / ``"down"`` / ``"neutral"`` based on the sign of x.
+
+    Coerces x to float defensively — returns ``"neutral"`` for any non-numeric
+    or NaN input instead of raising. Used by :func:`backfill_from_run` to
+    derive a direction label from the raw T+1 base return.
+    """
+    try:
+        if x is None or isinstance(x, bool):
+            return "neutral"
+        if not _is_numeric(x):
+            return "neutral"
+        if _is_nan(x):
+            return "neutral"
+        value = float(x)
+    except (TypeError, ValueError):
+        return "neutral"
+    if value > 0:
+        return "up"
+    if value < 0:
+        return "down"
+    return "neutral"
+
+
+def _coerce_float(value: Any, default: float | None = None) -> float | None:
+    """Safely coerce a value to a float, returning ``default`` on failure.
+
+    Mirrors the helper used in :mod:`scripts.push_to_google_chat` so the
+    backfill path can tolerate strings, ``None``, and NaN inputs without
+    raising.
+    """
+    if value is None or isinstance(value, bool):
+        return default
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return default
+    if _is_nan(f):
+        return default
+    return f
+
+
+def _format_weight(value: Any) -> str:
+    """CSV-stable weight string. Preserves 0.08 as ``"0.08"`` (not ``"0.0800001"``)."""
+    f = _coerce_float(value)
+    if f is None:
+        return ""
+    # Use repr to avoid floating-point noise (0.08 → "0.08", not "0.08000000004").
+    return repr(f)
+
+
+def backfill_from_run(run_dir: Any, prediction_date: str) -> dict[str, Any]:
+    """Build a single history row from a completed run dir's artifacts.
+
+    Args:
+        run_dir: Path like ``model_artifacts/HSI/20260721/run_154008``.
+        prediction_date: ISO date string for when the prediction was made.
+
+    Returns:
+        dict ready to feed to :func:`append_to_history`. Never raises — on
+        any failure (missing artifacts, parse errors, bad path) returns a
+        minimal dict with the metadata fields populated and everything else
+        left as empty strings. The caller decides whether to append it.
+    """
+    # Base / always-present columns — even on partial failure we still return
+    # a dict with the metadata so downstream artifacts can at least record
+    # that an attempt was made.
+    row: dict[str, Any] = {
+        "prediction_date": str(prediction_date) if prediction_date is not None else "",
+        "ticker": "HSI",
+        "vol_ann": "",
+        "direction": "neutral",
+    }
+    # Pre-populate all 7 horizons and top-10 pattern fields with empty strings
+    # so the CSV writer always has a consistent shape.
+    for h in (1, 5, 10, 15, 20, 25, 30):
+        row[f"T+{h}_pred"] = ""
+        row[f"T+{h}_actual"] = ""
+        row[f"T+{h}_correct"] = ""
+    for i in range(1, 11):
+        row[f"top{i}_pattern"] = ""
+        row[f"top{i}_weight"] = ""
+
+    # Coerce run_dir to a Path defensively.
+    try:
+        from pathlib import Path as _Path
+        rd = _Path(run_dir) if not isinstance(run_dir, _Path) else run_dir
+    except (TypeError, ValueError):
+        print(
+            f"[accuracy] WARNING: backfill_from_run got invalid run_dir: {run_dir!r}",
+            file=sys.stderr,
+        )
+        return row
+
+    # Compute root (model_artifacts/<TICKER>) — handle short paths gracefully.
+    try:
+        # run_dir = model_artifacts/<TICKER>/<DATE>/<RUN_ID>
+        # We want model_artifacts/<TICKER>; with < 4 parts we degrade to
+        # the deepest safe ancestor.
+        parts = rd.parents
+        if len(parts) >= 2:
+            root = parts[1]
+        else:
+            root = rd.parent
+    except (IndexError, AttributeError):
+        root = rd.parent
+
+    # Per the reviewer contract: this function MUST NEVER raise. Wrap every
+    # call into build_summary and pattern parsing in try/except.
+    try:
+        from scripts.collect_run_artifacts import build_summary
+        summary = build_summary(
+            run_dir=rd,
+            root=root,
+            ticker="^HSI",
+            commit_sha=None,
+        )
+    except Exception as exc:
+        print(
+            f"[accuracy] WARNING: backfill build_summary failed for {rd}: {exc}",
+            file=sys.stderr,
+        )
+        return row
+
+    # vol_ann — formatted to 1 decimal-place percent (e.g. 14.6) so the CSV
+    # row matches the Markdown / Chat UI representations.
+    try:
+        vol_ann_raw = _coerce_float(summary.get("vol_ann"))
+        if vol_ann_raw is not None:
+            row["vol_ann"] = "{:.1f}".format(vol_ann_raw)
+    except (TypeError, ValueError):
+        pass
+
+    # Predictions — fill T+{h}_pred for each horizon. Direction is derived
+    # from the T+1 base return sign (NOT the thresholded summary.direction),
+    # so a small positive move still counts as "up".
+    try:
+        preds_raw = summary.get("predictions") or {}
+        if isinstance(preds_raw, dict):
+            for h in (1, 5, 10, 15, 20, 25, 30):
+                key = f"{h}d"
+                val = _coerce_float(preds_raw.get(key))
+                if val is not None:
+                    row[f"T+{h}_pred"] = "{:.5f}".format(val)
+            # Direction from T+1 base return
+            t1 = _coerce_float(preds_raw.get("1d"))
+            if t1 is not None:
+                row["direction"] = _sign(t1)
+    except (TypeError, ValueError, AttributeError) as exc:
+        print(
+            f"[accuracy] WARNING: backfill prediction parsing failed: {exc}",
+            file=sys.stderr,
+        )
+
+    # Top 10 patterns — sort by avg_attention desc, take first 10.
+    try:
+        patt_raw = summary.get("pattern_attention") or {}
+        if isinstance(patt_raw, dict):
+            cleaned: list[tuple[str, float]] = []
+            for name, weight in patt_raw.items():
+                if not isinstance(name, str) or not name:
+                    continue
+                w = _coerce_float(weight)
+                if w is None:
+                    continue
+                cleaned.append((name, w))
+            cleaned.sort(key=lambda x: x[1], reverse=True)
+            for i, (name, weight) in enumerate(cleaned[:10], 1):
+                row[f"top{i}_pattern"] = name
+                row[f"top{i}_weight"] = _format_weight(weight)
+    except (TypeError, ValueError, AttributeError) as exc:
+        print(
+            f"[accuracy] WARNING: backfill pattern parsing failed: {exc}",
+            file=sys.stderr,
+        )
+
+    return row
+
+
 def _serialize_value(v: Any) -> str:
     """CSV-safe string conversion. Math.isnan handles np.float* natively."""
     if v is None:

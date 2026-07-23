@@ -357,3 +357,35 @@ def test_find_best_prediction_for_target_picks_lowest_error():
     best = find_best_prediction_for_target(rows, target_date="2026-07-20")
     assert best is not None
     assert best["prediction_date"] == "2026-07-15"  # T+5 had error 0.1, T+7 also 0.1, picks first
+
+
+# --------------------------------------------------------------------------
+# Task 6: backfill from existing run directory
+# --------------------------------------------------------------------------
+
+def test_backfill_from_existing_run(tmp_path: Path):
+    """If a run dir has all the artifacts, extract one history row from it."""
+    from scripts.accuracy import backfill_from_run
+    # Create fake run dir
+    run = tmp_path / "model_artifacts" / "HSI" / "20260721" / "run_154008"
+    run.mkdir(parents=True)
+    (run / "Proportional_Inference_Report.txt").write_text(
+        "Current T+0: 25000.00\n"
+        "T+1 | 2026-08-22 | 24000 ( -4%) | 25100 ( +0.40%) | 26000 ( +4%) | 0.92%\n",
+        encoding="utf-8",
+    )
+    # Pattern attention CSV
+    import csv as _csv
+    pat_csv = run / "pattern_attention_full_report.csv"
+    with pat_csv.open("w", newline="") as f:
+        w = _csv.DictWriter(f, fieldnames=["pattern", "avg_attention"])
+        w.writeheader()
+        w.writerow({"pattern": "MA5_Cross", "avg_attention": "0.08"})
+        w.writerow({"pattern": "Vol_GK", "avg_attention": "0.05"})
+    row = backfill_from_run(run, "2026-07-21")
+    assert row["prediction_date"] == "2026-07-21"
+    assert row["ticker"] == "HSI"
+    assert row["vol_ann"] == "14.6"  # 0.92 × √252
+    assert row["top1_pattern"] == "MA5_Cross"
+    assert row["top1_weight"] == "0.08"
+    assert row["direction"] == "up"  # T+1 base return +0.40% > 0
