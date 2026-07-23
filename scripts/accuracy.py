@@ -1014,7 +1014,7 @@ def _top_patterns_svg(top_patterns: list[dict]) -> str:
             f'<svg class="pattern-bar" width="280" height="14">'
             f'<rect x="0" y="0" width="{w_px:.1f}" height="14" fill="#1f883d"/>'
             f'</svg>'
-            f'<span class="pattern-weight">{p["weight"]*100:.1f}%</span>'
+            f'<span class="pattern-weight">{p["weight"]:.2e}</span>'
             f'</div>'
         )
     return "\n".join(rows)
@@ -1105,7 +1105,8 @@ def render_html(data: dict) -> str:
   .month-row, .pattern-row {{ display: flex; align-items: center; margin: 0.3em 0; gap: 0.5em; }}
   .month-name, .pattern-name {{ width: 80px; font-family: monospace; font-size: 0.9em; }}
   .pattern-name {{ width: 200px; }}
-  .month-acc, .pattern-weight {{ width: 50px; text-align: right; font-family: monospace; }}
+  .month-acc {{ width: 50px; text-align: right; font-family: monospace; }}
+  .pattern-weight {{ width: 80px; text-align: right; font-family: monospace; }}
   table {{ border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.9em; }}
   th, td {{ border: 1px solid #d0d7de; padding: 0.4em 0.6em; text-align: left; }}
   th {{ background: #f6f8fa; }}
