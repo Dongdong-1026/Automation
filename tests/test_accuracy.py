@@ -255,6 +255,36 @@ def test_compute_monthly_accuracy_skips_unrealized():
     assert result["2026-07"] == 1.0
 
 
+def test_build_accuracy_data_structure():
+    """Output JSON has all required top-level keys."""
+    from scripts.accuracy import build_accuracy_data
+    rows = [
+        {"prediction_date": "2026-07-15", "ticker": "^HSI", "T+1_pred": "0.001", "T+1_actual": "0.002", "T+1_correct": "true", "vol_ann": "14.6", "direction": "up"},
+    ]
+    data = build_accuracy_data(rows, ticker="^HSI")
+    assert "ticker" in data
+    assert "last_updated" in data
+    assert "monthly_accuracy" in data
+    assert "best_predictions" in data  # list of {target_date, ...}
+    assert "summary" in data
+    assert "samples_total" in data["summary"]
+
+
+def test_render_html_contains_key_sections():
+    """Generated HTML must include all 4 sections + GitHub Primer styling."""
+    from scripts.accuracy import render_html, build_accuracy_data
+    rows = [
+        {"prediction_date": "2026-07-15", "ticker": "^HSI", "T+1_pred": "0.001", "T+1_actual": "0.002", "T+1_correct": "true", "vol_ann": "14.6", "direction": "up", "top1_pattern": "MA5", "top1_weight": "0.08"},
+    ]
+    data = build_accuracy_data(rows)
+    html = render_html(data)
+    assert "整體" in html or "概覽" in html  # header
+    assert "近 6 個月" in html or "每月" in html
+    assert "Top 10" in html or "因子" in html
+    assert "<svg" in html  # charts use SVG
+    assert "MA5" in html  # pattern name appears
+
+
 def test_find_best_prediction_for_target_picks_lowest_error():
     """Given multiple predictions for the same target date, return the one with min |pred - actual|."""
     from scripts.accuracy import find_best_prediction_for_target
