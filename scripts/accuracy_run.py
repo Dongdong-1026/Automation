@@ -13,10 +13,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.accuracy import (
-    append_to_history,
     build_accuracy_data,
     render_html,
     update_actuals,
+    upsert_history_row,
 )
 
 
@@ -65,8 +65,11 @@ def main():
         ):
             row[f"top{index}_pattern"] = name
             row[f"top{index}_weight"] = weight
-        append_to_history(args.csv, row)
-        print(f"Appended row for {today}")
+        # upsert (not append): if a row for today's prediction_date already
+        # exists (e.g. this workflow was re-run manually), replace it
+        # instead of adding a duplicate row for the same date.
+        upsert_history_row(args.csv, row)
+        print(f"Upserted row for {today}")
 
         # 2) Update actuals for past predictions
         rows = _read_csv_rows(args.csv)

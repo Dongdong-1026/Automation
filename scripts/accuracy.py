@@ -52,6 +52,22 @@ CSV_FIELDS = [
     "top10_pattern", "top10_weight",
 ]
 
+# The "T+N" horizon labels are NOT calendar days — they're trading-day
+# counts in multiples of a 5-day week (T+1 is the one exception: the very
+# next trading day). Real target dates observed in production data:
+#   T+1  -> +1  calendar day
+#   T+5  -> +7  calendar days  (1 week)
+#   T+10 -> +14 calendar days  (2 weeks)
+#   T+15 -> +21 calendar days  (3 weeks)
+#   T+20 -> +28 calendar days  (4 weeks)
+#   T+25 -> +35 calendar days  (5 weeks)
+#   T+30 -> +42 calendar days  (6 weeks)
+# Using `timedelta(days=horizon)` directly (i.e. assuming T+5 == +5 days)
+# misaligns target-date lookups for every horizon except T+1.
+HORIZON_CALENDAR_DAYS: dict[int, int] = {
+    1: 1, 5: 7, 10: 14, 15: 21, 20: 28, 25: 35, 30: 42,
+}
+
 CANONICAL_HEADER = "prediction_date"
 
 
@@ -363,6 +379,65 @@ def append_to_history(csv_path: Path, row: dict[str, Any]) -> bool:
         return False
 
 
+def upsert_history_row(csv_path: Path, row: dict[str, Any]) -> bool:
+    """Insert `row` into predictions_history.csv, replacing any existing
+    row for the same ``prediction_date`` instead of appending a duplicate.
+
+    This makes re-running the daily push (e.g. a manual re-trigger, or
+    re-running the same day for recovery) idempotent: the CSV keeps at
+    most one row per prediction_date, and the latest run's data wins.
+    Never raises — prints a warning and returns False on failure.
+    """
+    try:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(
+            f"[accuracy] WARNING: could not mkdir {csv_path.parent}: {exc}",
+            file=sys.stderr,
+        )
+        return False
+
+    new_date = row.get("prediction_date")
+    if isinstance(new_date, (date, datetime)):
+        new_date = new_date.strftime("%Y-%m-%d")
+
+    existing_rows: list[dict[str, Any]] = []
+    if _header_matches(csv_path):
+        try:
+            with csv_path.open(encoding="utf-8", newline="") as f:
+                existing_rows = [
+                    r for r in csv.DictReader(f)
+                    if r.get("prediction_date") != new_date
+                ]
+        except (OSError, csv.Error) as exc:
+            print(
+                f"[accuracy] WARNING: failed to read {csv_path} for dedup: {exc}",
+                file=sys.stderr,
+            )
+            existing_rows = []
+
+    new_row_serialized = {k: _serialize_value(row.get(k)) for k in CSV_FIELDS}
+    all_rows = existing_rows + [new_row_serialized]
+    try:
+        all_rows.sort(key=lambda r: r.get("prediction_date") or "")
+    except Exception:
+        pass  # fall back to insertion order if sorting somehow fails
+
+    try:
+        with csv_path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
+            writer.writeheader()
+            for r in all_rows:
+                writer.writerow({k: r.get(k, "") for k in CSV_FIELDS})
+        return True
+    except (OSError, csv.Error, ValueError) as exc:
+        print(
+            f"[accuracy] WARNING: failed to upsert into {csv_path}: {exc}",
+            file=sys.stderr,
+        )
+        return False
+
+
 def compute_direction_accuracy(
     preds: Any, actuals: Any
 ) -> float | None:
@@ -554,14 +629,14 @@ def find_best_prediction_for_target(
             if not isinstance(pred_date, date):
                 continue
 
-            for days in (1, 5, 7, 10, 15, 20, 25, 30):
+            for days in (1, 5, 10, 15, 20, 25, 30):
                 if requested_horizon is not None and days != requested_horizon:
                     continue
                 pred = _row_pred_for_horizon(row, days)
                 actual = _row_actual_for_horizon(row, days)
                 if pred is None or actual is None:
                     continue
-                if (pred_date + timedelta(days=days)).isoformat() != target:
+                if (pred_date + timedelta(days=HORIZON_CALENDAR_DAYS[days])).isoformat() != target:
                     continue
                 candidates.append((abs(pred - actual), days, row))
     except Exception as exc:
@@ -710,7 +785,7 @@ def update_actuals(
             if baseline_close is None or baseline_close == 0:
                 continue
             for horizon in (1, 5, 10, 15, 20, 25, 30):
-                target_date = prediction_date + timedelta(days=horizon)
+                target_date = prediction_date + timedelta(days=HORIZON_CALENDAR_DAYS[horizon])
                 if target_date > today:
                     continue
                 target_close = _close_on_or_before(target_date)
@@ -810,9 +885,17 @@ def build_accuracy_data(rows: list[dict], ticker: str = "^HSI") -> dict:
                     except ValueError:
                         continue
                     for h in (1, 5, 10, 15, 20, 25, 30):
-                        td = (pd_obj + _timedelta(days=h)).isoformat()
-                        seen_targets.add(td)
-                # For each of the last 30 target dates, find best prediction
+                        target_dt = pd_obj + _timedelta(days=HORIZON_CALENDAR_DAYS[h])
+                        # Only realized (past/today) target dates can have an
+                        # actual value to compare against — future targets
+                        # would never match in find_best_prediction_for_target
+                        # anyway, but excluding them here means "last 30"
+                        # means the 30 most recent *resolvable* target dates,
+                        # not the 30 furthest-into-the-future ones.
+                        if today is not None and target_dt > today:
+                            continue
+                        seen_targets.add(target_dt.isoformat())
+                # For each of the last 30 (realized) target dates, find best prediction
                 for td in sorted(seen_targets)[-30:]:
                     try:
                         best = find_best_prediction_for_target(rows, td)

@@ -343,20 +343,39 @@ def test_render_html_escapes_user_content():
 
 
 def test_find_best_prediction_for_target_picks_lowest_error():
-    """Given multiple predictions for the same target date, return the one with min |pred - actual|."""
+    """Given multiple predictions for the same target date, return the one with min |pred - actual|.
+
+    The "T+N" labels are trading-week multiples, not calendar days: T+1 is
+    +1 calendar day, but T+5/T+10/... are +7/+14/... calendar days (weeks).
+    All three rows below resolve to the same target date, 2026-07-22:
+      2026-07-21 + 1 day (T+1)   = 2026-07-22
+      2026-07-15 + 7 days (T+5)  = 2026-07-22
+      2026-07-08 + 14 days (T+10) = 2026-07-22
+    """
     from scripts.accuracy import find_best_prediction_for_target
     rows = [
-        # Target 2026-07-20
-        # Prediction from 2026-07-19 (T+1): predicted +0.2%, actual +0.5%, error 0.3%
-        {"prediction_date": "2026-07-19", "T+1_pred": "0.002", "T+1_actual": "0.005", "T+1_correct": "false"},
-        # Prediction from 2026-07-15 (T+5): predicted +0.4%, actual +0.5%, error 0.1% ← BEST
+        # T+1: predicted +0.2%, actual +0.5%, error 0.3%
+        {"prediction_date": "2026-07-21", "T+1_pred": "0.002", "T+1_actual": "0.005", "T+1_correct": "false"},
+        # T+5: predicted +0.4%, actual +0.5%, error 0.1% ← BEST (tied with T+10, shorter horizon wins)
         {"prediction_date": "2026-07-15", "T+5_pred": "0.004", "T+5_actual": "0.005", "T+5_correct": "true"},
-        # Prediction from 2026-07-13 (T+7): predicted +0.6%, actual +0.5%, error 0.1%
-        {"prediction_date": "2026-07-13", "T+7_pred": "0.006", "T+7_actual": "0.005", "T+7_correct": "true"},
+        # T+10: predicted +0.6%, actual +0.5%, error 0.1% (tie, longer horizon loses tiebreak)
+        {"prediction_date": "2026-07-08", "T+10_pred": "0.006", "T+10_actual": "0.005", "T+10_correct": "true"},
     ]
-    best = find_best_prediction_for_target(rows, target_date="2026-07-20")
+    best = find_best_prediction_for_target(rows, target_date="2026-07-22")
     assert best is not None
-    assert best["prediction_date"] == "2026-07-15"  # T+5 had error 0.1, T+7 also 0.1, picks first
+    assert best["prediction_date"] == "2026-07-15"  # T+5 (5) ties T+10 (10) on error, shorter horizon wins
+
+
+def test_find_best_prediction_for_target_uses_week_based_horizons():
+    """T+5 must resolve to +7 calendar days, not +5 (regression for the
+    calendar-day/trading-week mismatch bug)."""
+    from scripts.accuracy import find_best_prediction_for_target
+    rows = [
+        {"prediction_date": "2026-07-15", "T+5_pred": "0.004", "T+5_actual": "0.005", "T+5_correct": "true"},
+    ]
+    # Naive (wrong) +5-calendar-day math would resolve to 2026-07-20, not 2026-07-22
+    assert find_best_prediction_for_target(rows, target_date="2026-07-20") is None
+    assert find_best_prediction_for_target(rows, target_date="2026-07-22") is not None
 
 
 # --------------------------------------------------------------------------
@@ -485,3 +504,47 @@ def test_update_actuals_compares_return_not_raw_price(tmp_path: Path, monkeypatc
     # Must be the -0.8% return, NOT the raw price (24800.0)
     assert actual_return == pytest.approx((24800.0 - 25000.0) / 25000.0)
     assert rows_after[0]["T+1_correct"] == "true"
+
+
+# --------------------------------------------------------------------------
+# Dedup / idempotent re-run
+# --------------------------------------------------------------------------
+
+def test_upsert_history_row_replaces_same_date_instead_of_duplicating(tmp_path: Path):
+    """Running the daily push twice for the same prediction_date (e.g. a
+    manual re-trigger) must update the existing row, not add a duplicate."""
+    from scripts.accuracy import upsert_history_row
+    csv_path = tmp_path / "predictions_history.csv"
+
+    row_a = {"prediction_date": "2026-07-21", "ticker": "HSI", "T+1_pred": 0.001, "vol_ann": 14.0, "direction": "up"}
+    row_b = {"prediction_date": "2026-07-22", "ticker": "HSI", "T+1_pred": 0.002, "vol_ann": 15.0, "direction": "up"}
+    # Re-run for 2026-07-21 with different numbers (simulates a manual re-trigger).
+    row_a_rerun = {"prediction_date": "2026-07-21", "ticker": "HSI", "T+1_pred": 0.009, "vol_ann": 20.0, "direction": "down"}
+
+    upsert_history_row(csv_path, row_a)
+    upsert_history_row(csv_path, row_b)
+    upsert_history_row(csv_path, row_a_rerun)
+
+    with csv_path.open(encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+
+    # Still only 2 distinct prediction dates -- no duplicate row for 07-21.
+    assert len(rows) == 2
+    by_date = {r["prediction_date"]: r for r in rows}
+    assert set(by_date) == {"2026-07-21", "2026-07-22"}
+    # The re-run's values won, not the original.
+    assert by_date["2026-07-21"]["T+1_pred"] == "0.009"
+    assert by_date["2026-07-21"]["direction"] == "down"
+
+
+def test_upsert_history_row_creates_new_file(tmp_path: Path):
+    """upsert_history_row must work on a brand-new (non-existent) CSV file."""
+    from scripts.accuracy import upsert_history_row
+    csv_path = tmp_path / "predictions_history.csv"
+    row = {"prediction_date": "2026-07-21", "ticker": "HSI", "T+1_pred": 0.001, "vol_ann": 14.0, "direction": "up"}
+    ok = upsert_history_row(csv_path, row)
+    assert ok is True
+    with csv_path.open(encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["prediction_date"] == "2026-07-21"
