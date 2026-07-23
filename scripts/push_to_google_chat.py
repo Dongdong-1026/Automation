@@ -45,6 +45,23 @@ def _html_escape(text: str) -> str:
     )
 
 
+def _coerce_float(value: Any, default: float | None = None) -> float | None:
+    """Best-effort coercion of `value` to float; returns `default` on failure.
+
+    Used to defend against `vol_ann` arriving as a JSON string (e.g. "14.6")
+    rather than a number. Returns:
+      - `default` if value is None
+      - float(value) if int / float / np.floating
+      - `default` if conversion raises TypeError/ValueError
+    """
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _fmt_pct(value: float | None, digits: int = 2) -> str:
     if value is None:
         return "—"
@@ -108,7 +125,8 @@ def build_card(summary: dict[str, Any]) -> dict[str, Any]:
 
     # Section 1: 未來波動率 (LARGE, PRIMARY HEADLINE)
     # Use vol_ann directly from LSTM vol_head (like VIX annualized 30-day)
-    vol_ann = summary.get("vol_ann")
+    vol_ann_raw = summary.get("vol_ann")
+    vol_ann = _coerce_float(vol_ann_raw)
     if vol_ann is not None:
         sections.append({
             "widgets": [{

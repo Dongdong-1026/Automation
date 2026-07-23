@@ -218,8 +218,17 @@ def build_summary(
         summary["direction"] = prediction.get("direction")
         # vol_ann may come from prediction_summary.json (TRAIN path) or from
         # _parse_proportional_report (INFERENCE path) — either way, propagate.
-        if prediction.get("vol_ann") is not None:
-            summary["vol_ann"] = prediction["vol_ann"]
+        # Coerce to float defensively: prediction_summary.json may carry
+        # vol_ann as a JSON string (e.g. "14.6") depending on the notebook
+        # writer. The downstream Chat push expects a number; normalization
+        # happens here so `build_card` never has to deal with strings.
+        _raw_vol_ann = prediction.get("vol_ann")
+        try:
+            summary["vol_ann"] = (
+                float(_raw_vol_ann) if _raw_vol_ann is not None else None
+            )
+        except (TypeError, ValueError):
+            summary["vol_ann"] = None
 
     # Pattern attention (per-day, up to 81 patterns): read pattern_attention_full_report.csv
     # which the notebook writes alongside the other artifacts. Each row has columns

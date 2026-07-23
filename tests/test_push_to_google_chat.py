@@ -11,6 +11,7 @@ import responses
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.collect_run_artifacts import build_summary  # noqa: E402
 from scripts.push_to_google_chat import build_card, post_card  # noqa: E402
 
 
@@ -169,3 +170,38 @@ def test_cli_reads_payload_and_webhook_env(tmp_path, monkeypatch, fake_summary_j
     assert rc == 0
     assert captured["url"] == "https://chat.example/wh"
     assert "cardsV2" in json.dumps(captured["card"])
+
+
+def test_build_card_handles_vol_ann_as_string(fake_summary_json):
+    """Regression: vol_ann may arrive as a JSON string ("14.6").
+    build_card must coerce to float — never raise TypeError on /.
+    """
+    fake_summary_json["vol_ann"] = "14.6"  # string, not float
+    card = build_card(fake_summary_json)
+    body = json.dumps(card, ensure_ascii=False)
+    assert "14.60%" in body, f"expected 14.60%% in card, got: {body[:500]}"
+
+
+def test_build_summary_coerces_vol_ann_from_prediction_json(fake_run_dir, fake_artifacts_root):
+    """Regression: prediction_summary.json may carry vol_ann as a string.
+    build_summary must coerce it to float so downstream consumers never trip
+    on the str / 100 TypeError.
+    """
+    import json as _json
+    # Rewrite the prediction_summary.json shipped by the fake_run_dir fixture
+    # to contain vol_ann as a JSON-encoded string.
+    pred_path = fake_run_dir / "prediction_summary.json"
+    parsed = _json.loads(pred_path.read_text(encoding="utf-8"))
+    parsed["vol_ann"] = "14.6"  # string on disk
+    pred_path.write_text(_json.dumps(parsed), encoding="utf-8")
+
+    summary = build_summary(
+        run_dir=fake_run_dir,
+        root=fake_artifacts_root,
+        ticker="^HSI",
+        commit_sha="abc1234",
+    )
+    assert summary["vol_ann"] == pytest.approx(14.6), (
+        f"expected summary['vol_ann'] coerced to 14.6 float, got {summary['vol_ann']!r}"
+    )
+    assert isinstance(summary["vol_ann"], float)
