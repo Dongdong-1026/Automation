@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Assemble a Google Chat cardsV2 message from a summary JSON and POST it.
 
-The webhook URL is read from an env var (default GOOGLE_CHAT_WEBHOOK).
-The script never logs the URL.
+Card structure (top to bottom):
+  1. AI summary (golden text) - if llm_summary present
+  2. Future volatility (LARGE, vol_ann from LSTM) - PRIMARY HEADLINE
+  3. Key predictions (7 horizons)
+  4. 1D hit summary (if available)
+  5. PNG charts (excluding Volatility_Path.png)
+  6. View commit button + footer
 """
 
 from __future__ import annotations
@@ -17,8 +22,10 @@ from typing import Any
 
 import requests
 
-DEFAULT_TIMEOUT = 15  # seconds
+DEFAULT_TIMEOUT = 15
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+EXCLUDED_PNGS = {"Proportional_Inference_Report.txt", "run_metrics.json"}
+VOL_PNG_NAME = "Step8_Volatility_Path.png"  # excluded from push per user request
 
 
 def _status_emoji(status: str) -> str:
@@ -31,7 +38,6 @@ def _status_emoji(status: str) -> str:
 
 
 def _html_escape(text: str) -> str:
-    """Escape characters that would break the cardsV2 HTML subset."""
     return (
         text.replace("&", "&amp;")
             .replace("<", "&lt;")
@@ -45,10 +51,10 @@ def _fmt_pct(value: float | None, digits: int = 2) -> str:
     return f"{value * 100:.{digits}f}%"
 
 
-def _fmt_num(value: float | None, digits: int = 4) -> str:
+def _fmt_pct_signed(value: float | None, digits: int = 2) -> str:
     if value is None:
         return "—"
-    return f"{value:.{digits}f}"
+    return f"{value * 100:+.{digits}f}%"
 
 
 def _prediction_rows(predictions: dict[str, float] | None) -> list[str]:
@@ -56,24 +62,22 @@ def _prediction_rows(predictions: dict[str, float] | None) -> list[str]:
         return []
     rows = []
     for horizon in ("1d", "5d", "10d", "15d", "20d", "25d", "30d"):
-        if horizon in predictions:
-            rows.append(f"• {horizon}: {_fmt_pct(predictions[horizon])}")
+        if horizon in predictions and predictions[horizon] is not None:
+            rows.append(f"• {horizon}: {_fmt_pct_signed(predictions[horizon])}")
     return rows
 
 
 def _png_widgets(png_files: list[dict[str, str]]) -> list[dict[str, Any]]:
     widgets: list[dict[str, Any]] = []
     for p in png_files or []:
-        widgets.append({
-            "image": {"imageUrl": p.get("url", "")},
-        })
+        widgets.append({"image": {"imageUrl": p.get("url", "")}})
         widgets.append({
             "textParagraph": {
                 "text": f"<a href=\"{p.get('url', '')}\">{p.get('name', 'image')}</a>"
             }
         })
     if not widgets:
-        widgets.append({"textParagraph": {"text": "（图片未生成）"}})
+        widgets.append({"textParagraph": {"text": "（圖片未生成）"}})
     return widgets
 
 
@@ -84,104 +88,94 @@ def build_card(summary: dict[str, Any]) -> dict[str, Any]:
     ticker = summary.get("ticker", "")
     generated_at = summary.get("generated_at", "")
     title_date = generated_at[:10] if generated_at else ""
-    title = f"{emoji} {ticker} 早晨预测 · {title_date} · {status}"
+    title = f"{emoji} {ticker} 早晨預測 · {title_date} · {status}"
 
     sections: list[dict[str, Any]] = []
 
-    # Section 0: LLM-generated summary (golden text), if available
+    # Section 0: AI summary (golden text)
     llm_summary = (summary.get("llm_summary") or "").strip()
     if llm_summary:
         sections.append({
             "widgets": [{
                 "textParagraph": {
                     "text": (
-                        "<font color=\"#FFD700\"><b>✨ AI 总结</b></font><br>"
+                        "<font color=\"#FFD700\"><b>✨ AI 總結</b></font><br>"
                         f"<font color=\"#FFD700\">{_html_escape(llm_summary)}</font>"
                     )
                 }
             }]
         })
 
-    # Section 1: key numerics (or error)
+    # Section 1: 未來波動率 (LARGE, PRIMARY HEADLINE)
+    # Use vol_ann directly from LSTM vol_head (like VIX annualized 30-day)
+    vol_ann = summary.get("vol_ann")
+    if vol_ann is not None:
+        sections.append({
+            "widgets": [{
+                "textParagraph": {
+                    "text": (
+                        f"<b>📊 未來波動率</b><br>"
+                        f"<font size=\"6\"><b>{_fmt_pct(vol_ann / 100, 2)}</b></font>"
+                    )
+                }
+            }]
+        })
+
+    # Section 2: 本次關鍵預測
     widgets: list[dict[str, Any]] = []
     if status in ("failed", "incomplete"):
         widgets.append({
             "textParagraph": {
-                "text": f"<b>错误：</b> {summary.get('error') or '未知'}"
+                "text": f"<b>錯誤：</b> {_html_escape(summary.get('error') or '未知')}"
             }
         })
     else:
         rows = _prediction_rows(summary.get("predictions"))
         if rows:
             widgets.append({
-                "textParagraph": {"text": "<b>本次关键预测</b><br>" + "<br>".join(rows)}
+                "textParagraph": {"text": "<b>📈 本次關鍵預測</b><br>" + "<br>".join(rows)}
             })
-        vol = summary.get("volatility")
-        vol_by_horizon = summary.get("volatility_by_horizon") or {}
-        vol_t1 = vol_by_horizon.get("1d", vol)  # daily (T+1) vol, falls back to top-level field
-        vol_t30 = vol_by_horizon.get("30d")     # 30-day cumulative vol
         direction = summary.get("direction")
-        # Headline label and value must match semantically:
-        # - T+30 available → label "T+30 日级", show T+30 cumulative vol
-        # - Otherwise T+1 → label "T+1 日级", show T+1 daily vol
-        # - Otherwise → "—"
-        if vol_t30 is not None:
-            headline_horizon = "T+30 日级"
-            headline_vol = vol_t30
-        elif vol_t1 is not None:
-            headline_horizon = "T+1 日级"
-            headline_vol = vol_t1
-        else:
-            headline_horizon = "—"
-            headline_vol = vol
-        vol_lines = [
-            f"<b>未来波动率（{headline_horizon}）：</b> {_fmt_pct(headline_vol)}<br>"
-            f"<b>方向判断：</b> {direction or '—'}"
-        ]
-        # Show calculation method as a small annotation
-        if vol_t1 is not None and vol_t30 is not None and vol_t30 != vol_t1:
-            ratio = vol_t30 / vol_t1 if vol_t1 else 0
-            vol_lines.append(
-                f"<font color=\"#888888\">└ 计算：LSTM vol_head → 日级 σ × √30 ≈ {_fmt_pct(vol_t1)} × {ratio:.2f} ≈ {_fmt_pct(vol_t30)}</font>"
-            )
-        elif vol_t1 is not None:
-            vol_lines.append(
-                f"<font color=\"#888888\">└ 计算：LSTM vol_head 直接输出</font>"
-            )
-        widgets.append({
-            "textParagraph": {"text": "<br>".join(vol_lines)}
-        })
-    sections.append({"widgets": widgets})
+        if direction:
+            widgets.append({
+                "textParagraph": {
+                    "text": f"<b>方向判斷：</b> {direction}"
+                }
+            })
+    if widgets:
+        sections.append({"widgets": widgets})
 
-    # Section 2: 1D review
+    # Section 3: 1D 命中摘要
     rev = summary.get("latest_1d_review")
     if rev:
         sections.append({
             "widgets": [{
                 "textParagraph": {
                     "text": (
-                        "<b>最近 1D 命中摘要</b><br>"
+                        "<b>🎯 最近 1D 命中摘要</b><br>"
                         f"日期：{rev.get('date')}<br>"
-                        f"样本：{rev.get('sample_count')}<br>"
-                        f"方向命中率：{rev.get('direction_accuracy_pct', 0):.2f}%<br>"
-                        f"预测均值：{_fmt_pct((rev.get('pred_avg_return_pct') or 0) / 100, 4)}<br>"
-                        f"实际均值：{_fmt_pct((rev.get('actual_avg_return_pct') or 0) / 100, 4)}"
+                        f"樣本：{rev.get('sample_count')}<br>"
+                        f"方向命中率：{rev.get('direction_accuracy_pct', 0):.2f}%"
                     )
                 }
             }]
         })
 
-    # Section 3: PNGs
-    sections.append({
-        "header": "预测图",
-        "widgets": _png_widgets(summary.get("png_files") or []),
-    })
+    # Section 4: 預測圖 (exclude Volatility_Path.png per user request)
+    png_files = [
+        p for p in (summary.get("png_files") or [])
+        if p.get("name") != VOL_PNG_NAME
+    ]
+    if png_files:
+        sections.append({
+            "header": "🖼️ 預測圖",
+            "widgets": _png_widgets(png_files),
+        })
 
-    # Section 4: Footer / actions
+    # Section 5: Footer with View commit button
     sha = summary.get("commit_sha") or ""
     actions = []
     if sha and sha != "none":
-        # cardsV2 button: 'text' at top level, 'openLink.url' nested inside 'onClick'
         actions.append({
             "text": "View commit",
             "onClick": {
@@ -198,9 +192,7 @@ def build_card(summary: dict[str, Any]) -> dict[str, Any]:
         # cardsV2 widget type is 'buttonList' (not 'buttons' — that's v1 card syntax)
         footer_widgets.append({"buttonList": {"buttons": actions}})
     footer_widgets.append({
-        "textParagraph": {
-            "text": "由 daily-morning-push 自动生成"
-        }
+        "textParagraph": {"text": "由 daily-morning-push 自動生成"}
     })
     sections.append({"widgets": footer_widgets})
 
