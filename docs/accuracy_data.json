@@ -1,68 +1,19 @@
 {
   "ticker": "^HSI",
-  "last_updated": "2026-07-23",
+  "last_updated": "2026-07-24",
   "summary": {
-    "overall_accuracy": 0.46875,
-    "samples_total": 448,
+    "overall_accuracy": 0.4656319290465632,
+    "samples_total": 451,
     "months_covered": 5
   },
   "monthly_accuracy": {
     "2026-03": 0.5378151260504201,
     "2026-04": 0.5,
     "2026-05": 0.40816326530612246,
-    "2026-06": 0.452991452991453,
-    "2026-07": 0.5
+    "2026-06": 0.44537815126050423,
+    "2026-07": 0.48
   },
   "best_predictions": [
-    {
-      "target_date": "2026-06-21",
-      "prediction_date": "2026-06-14",
-      "horizon": "?",
-      "pred": -0.0023,
-      "actual": 0.00504,
-      "top_patterns": [
-        {
-          "name": "Inside_Day",
-          "weight": 8.9956e-05
-        },
-        {
-          "name": "KDJ_D",
-          "weight": 6.4333e-05
-        },
-        {
-          "name": "Price_Z_Score_60",
-          "weight": 6.0058e-05
-        },
-        {
-          "name": "Drawdown_From_60D_High",
-          "weight": 5.7712e-05
-        },
-        {
-          "name": "Vol_Dry_Up",
-          "weight": 5.4012e-05
-        },
-        {
-          "name": "Large_Down_Move",
-          "weight": 5.3634e-05
-        },
-        {
-          "name": "Gap_Up_VolAdj",
-          "weight": 4.8553e-05
-        },
-        {
-          "name": "Market_Up_Down_Ratio",
-          "weight": 4.6344e-05
-        },
-        {
-          "name": "KDJ_K",
-          "weight": 4.5359e-05
-        },
-        {
-          "name": "Price_Rank_252",
-          "weight": 4.1911e-05
-        }
-      ]
-    },
     {
       "target_date": "2026-06-22",
       "prediction_date": "2026-06-21",
@@ -1442,6 +1393,14 @@
           "weight": 5.0518e-05
         }
       ]
+    },
+    {
+      "target_date": "2026-07-24",
+      "prediction_date": "2026-07-23",
+      "horizon": "?",
+      "pred": 0.0008,
+      "actual": 0.0,
+      "top_patterns": []
     }
   ]
 }
