@@ -2,8 +2,8 @@ name: Daily Morning Push (HSI → Google Chat)
 
 on:
   schedule:
-    # 00:00 UTC = 08:00 HKT / Beijing, weekdays
-    - cron: "0 0 * * 1-5"
+    # 23:30 UTC (前一日) = 07:30 HKT / Beijing, weekdays
+    - cron: "30 23 * * 0-4"
   workflow_dispatch:
 
 permissions:
